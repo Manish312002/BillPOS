@@ -6,6 +6,7 @@ import {
   totpVerificationSchema,
   totpEnrollmentConfirmSchema,
   totpRecoveryVerifySchema,
+  changePasswordSchema,
   createTenantSchema,
   ownerActivationSchema,
   ownerLoginSchema,
@@ -85,6 +86,14 @@ describe('Shared Authentication Contracts & Validation Schemas (ADR-002)', () =>
       expect(parsed.code).toBe('123456');
     });
 
+    it('accepts confirmation payload without secret when secret is pre-persisted', () => {
+      const parsed = totpEnrollmentConfirmSchema.parse({
+        code: '654321',
+      });
+      expect(parsed.code).toBe('654321');
+      expect(parsed.secret).toBeUndefined();
+    });
+
     it('rejects non-Base32 secrets or invalid codes', () => {
       expect(() =>
         totpEnrollmentConfirmSchema.parse({
@@ -106,6 +115,33 @@ describe('Shared Authentication Contracts & Validation Schemas (ADR-002)', () =>
     it('rejects short or empty recovery codes', () => {
       expect(() => totpRecoveryVerifySchema.parse({ recoveryCode: 'short' })).toThrow();
       expect(() => totpRecoveryVerifySchema.parse({ recoveryCode: '' })).toThrow();
+    });
+  });
+
+  describe('changePasswordSchema', () => {
+    it('accepts valid password change request', () => {
+      const parsed = changePasswordSchema.parse({
+        currentPassword: 'OldPassword123!',
+        newPassword: 'SuperSecret@NewPassword2026!',
+      });
+      expect(parsed.currentPassword).toBe('OldPassword123!');
+      expect(parsed.newPassword).toBe('SuperSecret@NewPassword2026!');
+    });
+
+    it('rejects weak new passwords or missing current password', () => {
+      expect(() =>
+        changePasswordSchema.parse({
+          currentPassword: '',
+          newPassword: 'ValidPassword123!',
+        })
+      ).toThrow();
+
+      expect(() =>
+        changePasswordSchema.parse({
+          currentPassword: 'ValidPassword123!',
+          newPassword: 'short',
+        })
+      ).toThrow();
     });
   });
 

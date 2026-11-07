@@ -47,6 +47,7 @@ model User {
   updatedAt          DateTime   @updatedAt
 
   platformAuthorization PlatformAuthorization?
+  totp                  UserTotp?
   tenantMemberships     TenantMembership[]
   sessions              Session[]
   otpChallenges         OTPChallenge[]
@@ -70,6 +71,24 @@ model PlatformAuthorization {
   revokedAt DateTime?
 
   @@index([status])
+}
+
+// Two-Factor Authentication (TOTP) credentials and state
+model UserTotp {
+  id                 String    @id @default(uuid())
+  userId             String    @unique
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  secretEncrypted    String
+  isEnabled          Boolean   @default(false)
+  lastAcceptedStep   Int?
+  recoveryCodeHashes String[]  @default([])
+  failedAttempts     Int       @default(0)
+  lockedUntil        DateTime?
+  confirmedAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([userId])
 }
 
 // ==========================================

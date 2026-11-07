@@ -55,7 +55,8 @@ export const totpEnrollmentConfirmSchema = z.object({
     .string()
     .trim()
     .min(16, { message: 'Base32 secret is required' })
-    .regex(/^[A-Z2-7]+$/i, { message: 'Secret must be valid Base32 format' }),
+    .regex(/^[A-Z2-7]+$/i, { message: 'Secret must be valid Base32 format' })
+    .optional(),
   code: z
     .string()
     .trim()
@@ -68,6 +69,14 @@ export const totpEnrollmentConfirmSchema = z.object({
  */
 export const totpRecoveryVerifySchema = z.object({
   recoveryCode: z.string().trim().min(10, { message: 'Valid recovery code is required' }),
+});
+
+/**
+ * Password change request schema
+ */
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, { message: 'Current password is required' }),
+  newPassword: passwordPolicySchema,
 });
 
 /**
