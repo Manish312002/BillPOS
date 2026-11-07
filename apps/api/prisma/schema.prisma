@@ -1,5 +1,6 @@
 // BillingBuddy — Database Schema Baseline
-// Work Package: WP-01 (Greenfield Foundation)
+// Work Package: WP-02 (Authentication & Multi-Tenant Access Foundation)
+// Microtask: BB-WP02-02.01
 
 generator client {
   provider = "prisma-client-js"
@@ -8,4 +9,304 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// 1. Core Identity & Platform Authorization
+// ==========================================
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING_ACTIVATION
+}
+
+enum PlatformRole {
+  SUPERADMIN
+}
+
+enum PlatformAuthStatus {
+  ACTIVE
+  REVOKED
+}
+
+// Global identity, independent of tenant membership
+model User {
+  id                 String     @id @default(uuid())
+  fullName           String
+  email              String?    @unique
+  phone              String?    @unique
+  passwordHash       String?
+  status             UserStatus @default(ACTIVE)
+  emailVerified      Boolean    @default(false)
+  emailVerifiedAt    DateTime?
+  phoneVerified      Boolean    @default(false)
+  mustChangePassword Boolean    @default(false)
+  lastLoginAt        DateTime?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  platformAuthorization PlatformAuthorization?
+  tenantMemberships     TenantMembership[]
+  sessions              Session[]
+  otpChallenges         OTPChallenge[]
+  createdInvitations    OwnerInvitation[]     @relation("CreatedInvitations")
+  auditLogs             AuditLog[]
+
+  @@index([phone])
+  @@index([email])
+  @@index([status])
+}
+
+// Platform-level permissions for root platform administration
+model PlatformAuthorization {
+  id        String             @id @default(uuid())
+  userId    String             @unique
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      PlatformRole       @default(SUPERADMIN)
+  status    PlatformAuthStatus @default(ACTIVE)
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+  revokedAt DateTime?
+
+  @@index([status])
+}
+
+// ==========================================
+// 2. Multi-Tenant Organization & Membership
+// ==========================================
+
+enum TenantStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+}
+
+enum TenantRole {
+  STORE_OWNER
+  STORE_CASHIER
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INACTIVE
+}
+
+// Tenant organization (store or business entity)
+model Tenant {
+  id                 String              @id @default(uuid())
+  slug               String              @unique
+  legalName          String
+  tradeName          String?
+  status             TenantStatus        @default(INVITED)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  memberships        TenantMembership[]
+  invitations        OwnerInvitation[]
+  onboardingProgress OnboardingProgress?
+  auditLogs          AuditLog[]
+  sessions           Session[]
+
+  @@index([slug])
+  @@index([status])
+}
+
+// Association between User and Tenant with tenant-specific roles
+model TenantMembership {
+  id        String           @id @default(uuid())
+  tenantId  String
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      TenantRole
+  status    MembershipStatus @default(ACTIVE)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@unique([tenantId, userId])
+  @@index([userId])
+  @@index([tenantId])
+  @@index([role])
+}
+
+// ==========================================
+// 3. Opaque Server-Side Sessions
+// ==========================================
+
+enum SessionType {
+  PLATFORM
+  TENANT
+}
+
+// Opaque server-side sessions with cryptographic hash verification
+model Session {
+  id                    String      @id @default(uuid())
+  sessionTokenHash      String      @unique
+  userId                String
+  user                  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activeTenantId        String?
+  activeTenant          Tenant?     @relation(fields: [activeTenantId], references: [id], onDelete: Cascade)
+  sessionType           SessionType
+  isSecondFactorPending Boolean     @default(false)
+  lastActivityAt        DateTime    @default(now())
+  idleExpiresAt         DateTime
+  absoluteExpiresAt     DateTime
+  revokedAt             DateTime?
+  ipAddress             String?
+  userAgent             String?
+  createdAt             DateTime    @default(now())
+
+  @@index([userId])
+  @@index([sessionTokenHash])
+  @@index([activeTenantId])
+  @@index([idleExpiresAt])
+  @@index([absoluteExpiresAt])
+  @@index([revokedAt])
+}
+
+// ==========================================
+// 4. One-Time Password (OTP) Challenges
+// ==========================================
+
+enum OTPPurpose {
+  SUPERADMIN_LOGIN
+  OWNER_ACTIVATION
+  OWNER_PASSWORD_RECOVERY
+  SUPERADMIN_PASSWORD_RECOVERY
+}
+
+// Single-use, purpose-bound OTP challenges
+model OTPChallenge {
+  id                 String           @id @default(uuid())
+  purpose            OTPPurpose
+  userId             String?
+  user               User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invitationId       String?
+  invitation         OwnerInvitation? @relation("InvitationOTP", fields: [invitationId], references: [id], onDelete: SetNull)
+  otpDigest          String
+  deliveryChannel    String           @default("WHATSAPP")
+  destination        String
+  attemptsCount      Int              @default(0)
+  maxAttempts        Int              @default(3)
+  expiresAt          DateTime
+  consumedAt         DateTime?
+  invalidatedAt      DateTime?
+  resendAvailableAt  DateTime
+  createdAt          DateTime         @default(now())
+
+  @@index([destination, purpose])
+  @@index([expiresAt])
+  @@index([userId])
+  @@index([invitationId])
+}
+
+// ==========================================
+// 5. Store Owner Invitations
+// ==========================================
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+  SUPERSEDED
+}
+
+// Tokenized Store Owner invitations initiated by Superadmin
+model OwnerInvitation {
+  id           String           @id @default(uuid())
+  tenantId     String
+  tenant       Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invitedEmail String
+  invitedPhone String
+  tokenHash    String           @unique
+  status       InvitationStatus @default(PENDING)
+  expiresAt    DateTime
+  acceptedAt   DateTime?
+  revokedAt    DateTime?
+  createdById  String?
+  createdBy    User?            @relation("CreatedInvitations", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  otpChallenges OTPChallenge[]  @relation("InvitationOTP")
+
+  @@index([tokenHash])
+  @@index([tenantId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+// ==========================================
+// 6. Store Onboarding Progress
+// ==========================================
+
+// Mandatory six-step store onboarding state tracking
+model OnboardingProgress {
+  id          String    @id @default(uuid())
+  tenantId    String    @unique
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  currentStep Int       @default(1)
+  isCompleted Boolean   @default(false)
+  stepData    Json      @default("{}")
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([tenantId])
+}
+
+// ==========================================
+// 7. Audit Logging & Security Events
+// ==========================================
+
+// Immutable, append-only security and operational audit trail
+model AuditLog {
+  id             String    @id @default(uuid())
+  actorUserId    String?
+  actorUser      User?     @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  targetTenantId String?
+  targetTenant   Tenant?   @relation(fields: [targetTenantId], references: [id], onDelete: SetNull)
+  eventType      String
+  action         String
+  resourceType   String?
+  resourceId     String?
+  metadata       Json?
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime  @default(now())
+
+  @@index([actorUserId])
+  @@index([targetTenantId])
+  @@index([action])
+  @@index([eventType])
+  @@index([createdAt])
+}
+
+// ==========================================
+// 8. Notification & Delivery Events
+// ==========================================
+
+enum NotificationDeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+// Asynchronous notifications and delivery audit records
+model NotificationEvent {
+  id             String                     @id @default(uuid())
+  eventType      String
+  recipient      String
+  deliveryStatus NotificationDeliveryStatus @default(PENDING)
+  metadata       Json?
+  readAt         DateTime?
+  deliveredAt    DateTime?
+  createdAt      DateTime                   @default(now())
+
+  @@index([eventType])
+  @@index([deliveryStatus])
+  @@index([recipient])
+  @@index([createdAt])
 }
