@@ -4,7 +4,9 @@ import { disconnectPrisma } from './db/client.js';
 
 const server = app.listen(env.PORT, () => {
   console.log(`[BillingBuddy API] Server listening on port ${env.PORT} (${env.NODE_ENV})`);
-  console.log(`[BillingBuddy API] Health check endpoint: http://localhost:${env.PORT}${env.API_PREFIX}/health`);
+  console.log(
+    `[BillingBuddy API] Health check endpoint: http://localhost:${env.PORT}${env.API_PREFIX}/health`
+  );
 });
 
 async function shutdown(signal) {

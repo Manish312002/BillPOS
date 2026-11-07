@@ -8,7 +8,10 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(4000),
   API_PREFIX: z.string().default('/api'),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
-  DATABASE_URL: z.string().optional().default('postgresql://postgres:postgres@localhost:5432/billingbuddy?schema=public'),
+  DATABASE_URL: z
+    .string()
+    .optional()
+    .default('postgresql://postgres:postgres@localhost:5432/billingbuddy?schema=public'),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

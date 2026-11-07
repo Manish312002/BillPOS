@@ -7,5 +7,26 @@
     "apps/web",
     "apps/api",
     "packages/shared"
-  ]
+  ],
+  "engines": {
+    "node": ">=22.12.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev:api": "npm run dev --workspace=@billingbuddy/api",
+    "dev:web": "npm run dev --workspace=@billingbuddy/web",
+    "build": "npm run build --workspace=@billingbuddy/web",
+    "test": "npm test --workspaces",
+    "test:api": "npm test --workspace=@billingbuddy/api",
+    "test:web": "npm test --workspace=@billingbuddy/web",
+    "test:shared": "npm test --workspace=@billingbuddy/shared",
+    "lint": "eslint .",
+    "format": "prettier --write \"apps/**/*.{js,jsx,json,css}\" \"packages/**/*.{js,json}\" \"*.{js,json}\"",
+    "format:check": "prettier --check \"apps/**/*.{js,jsx,json,css}\" \"packages/**/*.{js,json}\" \"*.{js,json}\"",
+    "verify": "node scripts/verify-workspace.js"
+  },
+  "devDependencies": {
+    "eslint": "10.14.0",
+    "prettier": "3.9.10"
+  }
 }

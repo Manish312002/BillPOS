@@ -17,7 +17,8 @@ export function PlatformSubscriptionsPage() {
           <StatusBadge label="Namespace: /platform/subscriptions" variant="info" />
         </div>
         <p className="text-xs text-slate-400 leading-relaxed">
-          Structural view ready for subscription tiering and plan enforcement logic in future work packages.
+          Structural view ready for subscription tiering and plan enforcement logic in future work
+          packages.
         </p>
       </div>
     </div>

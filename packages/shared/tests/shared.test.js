@@ -100,7 +100,9 @@ describe('@billingbuddy/shared Utilities', () => {
 
   it('truncates strings cleanly', () => {
     expect(truncate('Short string', 20)).toBe('Short string');
-    expect(truncate('This is a longer string that exceeds twenty chars', 20)).toBe('This is a longer str...');
+    expect(truncate('This is a longer string that exceeds twenty chars', 20)).toBe(
+      'This is a longer str...'
+    );
   });
 
   it('capitalizes strings', () => {

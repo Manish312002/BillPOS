@@ -21,12 +21,12 @@ export function StatusBadge({ label, variant = 'info', dot = true }) {
             variant === 'active'
               ? 'bg-emerald-400'
               : variant === 'pending'
-              ? 'bg-amber-400'
-              : variant === 'warning'
-              ? 'bg-rose-400'
-              : variant === 'inactive'
-              ? 'bg-slate-400'
-              : 'bg-sky-400'
+                ? 'bg-amber-400'
+                : variant === 'warning'
+                  ? 'bg-rose-400'
+                  : variant === 'inactive'
+                    ? 'bg-slate-400'
+                    : 'bg-sky-400'
           }`}
         />
       )}

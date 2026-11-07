@@ -24,17 +24,13 @@ export function PlatformOverviewPage() {
         <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
           <div className="text-xs font-medium text-slate-400">Security Notice</div>
           <div className="mt-1 text-lg font-semibold text-slate-200">Structural Routing</div>
-          <div className="mt-2 text-xs text-slate-500">
-            Backend enforces ultimate authorization
-          </div>
+          <div className="mt-2 text-xs text-slate-500">Backend enforces ultimate authorization</div>
         </div>
 
         <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
           <div className="text-xs font-medium text-slate-400">Target Role</div>
           <div className="mt-1 text-lg font-semibold text-slate-200">Superadmin</div>
-          <div className="mt-2 text-xs text-slate-500">
-            Platform governance & tenant onboarding
-          </div>
+          <div className="mt-2 text-xs text-slate-500">Platform governance & tenant onboarding</div>
         </div>
       </div>
     </div>

@@ -9,15 +9,13 @@ export function errorHandler(err, req, res, next) {
   const isDev = process.env.NODE_ENV === 'development';
 
   if (err instanceof ZodError) {
-    return res.status(400).json(
-      errorResponse('Validation failed', err.issues, 'VALIDATION_ERROR')
-    );
+    return res.status(400).json(errorResponse('Validation failed', err.issues, 'VALIDATION_ERROR'));
   }
 
   if (err.name === 'SyntaxError' && 'body' in err) {
-    return res.status(400).json(
-      errorResponse('Malformed JSON in request payload', null, 'BAD_REQUEST')
-    );
+    return res
+      .status(400)
+      .json(errorResponse('Malformed JSON in request payload', null, 'BAD_REQUEST'));
   }
 
   const statusCode = typeof err.statusCode === 'number' ? err.statusCode : 500;
@@ -28,13 +26,9 @@ export function errorHandler(err, req, res, next) {
     console.error('[Unhandled Error]', err);
   }
 
-  return res.status(statusCode).json(
-    errorResponse(
-      message,
-      isDev ? { stack: err.stack, details: err.details } : null,
-      code
-    )
-  );
+  return res
+    .status(statusCode)
+    .json(errorResponse(message, isDev ? { stack: err.stack, details: err.details } : null, code));
 }
 
 export default errorHandler;

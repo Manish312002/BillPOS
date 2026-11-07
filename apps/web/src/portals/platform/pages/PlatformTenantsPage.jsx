@@ -11,7 +11,8 @@ export function PlatformTenantsPage() {
       </div>
 
       <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4 text-sm text-slate-300">
-        Placeholder view for tenant management. Business functionality will be introduced in subsequent work packages.
+        Placeholder view for tenant management. Business functionality will be introduced in
+        subsequent work packages.
       </div>
     </div>
   );

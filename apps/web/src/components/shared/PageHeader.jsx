@@ -12,9 +12,7 @@ export function PageHeader({ title, description, badge, actions }) {
             </span>
           )}
         </div>
-        {description && (
-          <p className="text-sm opacity-70 leading-relaxed">{description}</p>
-        )}
+        {description && <p className="text-sm opacity-70 leading-relaxed">{description}</p>}
       </div>
       {actions && <div className="mt-3 sm:mt-0 flex items-center gap-2">{actions}</div>}
     </div>

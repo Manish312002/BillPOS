@@ -17,7 +17,8 @@ export function OwnerPosPage() {
           <StatusBadge label="Namespace: /owner/pos" variant="active" />
         </div>
         <p className="text-xs text-slate-600 leading-relaxed">
-          Structural view ready for POS checkout register, fast-key billing, and offline receipt dispatch in future work packages.
+          Structural view ready for POS checkout register, fast-key billing, and offline receipt
+          dispatch in future work packages.
         </p>
       </div>
     </div>

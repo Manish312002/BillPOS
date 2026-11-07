@@ -42,11 +42,15 @@ export function OwnerLayout() {
                 BillingBuddy
               </h1>
               <span className="hidden sm:inline-block text-xs font-mono text-emerald-600">/</span>
-              <span className="hidden sm:inline-block text-xs text-emerald-200">{currentTitle}</span>
+              <span className="hidden sm:inline-block text-xs text-emerald-200">
+                {currentTitle}
+              </span>
             </div>
             <div className="flex items-center gap-2 mt-0.5">
               <span className="text-xs font-mono text-emerald-300">Store Operations</span>
-              <span className="text-[11px] text-emerald-400 font-mono hidden sm:inline">• Store #101</span>
+              <span className="text-[11px] text-emerald-400 font-mono hidden sm:inline">
+                • Store #101
+              </span>
             </div>
           </div>
         </div>
@@ -118,7 +122,9 @@ export function OwnerLayout() {
       {/* Footer */}
       <footer className="border-t border-slate-200 bg-white px-4 sm:px-6 py-2 text-xs text-slate-500 flex flex-col sm:flex-row justify-between gap-1">
         <span>BillingBuddy Store Workspace • Retail Operations</span>
-        <span>Namespace: <code>/owner/*</code></span>
+        <span>
+          Namespace: <code>/owner/*</code>
+        </span>
       </footer>
     </div>
   );

@@ -16,25 +16,19 @@ export function OwnerOverviewPage() {
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-2xs">
           <div className="text-xs font-medium text-slate-500">Namespace Status</div>
           <div className="mt-1 text-lg font-semibold text-emerald-600">Active (/owner)</div>
-          <div className="mt-2 text-xs text-slate-400">
-            Tenant layout & operational navigation
-          </div>
+          <div className="mt-2 text-xs text-slate-400">Tenant layout & operational navigation</div>
         </div>
 
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-2xs">
           <div className="text-xs font-medium text-slate-500">Security Notice</div>
           <div className="mt-1 text-lg font-semibold text-slate-800">Structural Routing</div>
-          <div className="mt-2 text-xs text-slate-400">
-            Tenant boundaries enforced by API
-          </div>
+          <div className="mt-2 text-xs text-slate-400">Tenant boundaries enforced by API</div>
         </div>
 
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-2xs">
           <div className="text-xs font-medium text-slate-500">Target Role</div>
           <div className="mt-1 text-lg font-semibold text-slate-800">Store Owner / Cashier</div>
-          <div className="mt-2 text-xs text-slate-400">
-            Billing register, inventory, reports
-          </div>
+          <div className="mt-2 text-xs text-slate-400">Billing register, inventory, reports</div>
         </div>
       </div>
     </div>

@@ -17,7 +17,8 @@ export function PlatformSettingsPage() {
           <StatusBadge label="Namespace: /platform/settings" variant="info" />
         </div>
         <p className="text-xs text-slate-400 leading-relaxed">
-          Structural view ready for global platform settings, webhook registrations, and integration endpoints.
+          Structural view ready for global platform settings, webhook registrations, and integration
+          endpoints.
         </p>
       </div>
     </div>

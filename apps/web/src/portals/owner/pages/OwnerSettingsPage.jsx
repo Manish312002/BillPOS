@@ -17,7 +17,8 @@ export function OwnerSettingsPage() {
           <StatusBadge label="Namespace: /owner/settings" variant="active" />
         </div>
         <p className="text-xs text-slate-600 leading-relaxed">
-          Structural view ready for store GSTIN, thermal printer ESC/POS configuration, and invoice layout customizer in future work packages.
+          Structural view ready for store GSTIN, thermal printer ESC/POS configuration, and invoice
+          layout customizer in future work packages.
         </p>
       </div>
     </div>

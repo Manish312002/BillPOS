@@ -52,7 +52,9 @@ describe('Frontend Foundation Architecture Tests', () => {
     expect(screen.getByText(/404/i)).toBeInTheDocument();
     expect(screen.getByText(/Page Not Found/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/The requested route does not exist within the Superadmin or Store Owner namespaces/i)
+      screen.getByText(
+        /The requested route does not exist within the Superadmin or Store Owner namespaces/i
+      )
     ).toBeInTheDocument();
   });
 

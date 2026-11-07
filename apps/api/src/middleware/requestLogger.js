@@ -7,7 +7,9 @@ export function requestLogger(req, res, next) {
   res.on('finish', () => {
     const duration = Date.now() - start;
     if (process.env.NODE_ENV !== 'test') {
-      console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ${res.statusCode} - ${duration}ms`);
+      console.log(
+        `[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ${res.statusCode} - ${duration}ms`
+      );
     }
   });
 

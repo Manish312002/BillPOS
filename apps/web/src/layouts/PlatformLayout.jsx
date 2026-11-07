@@ -114,7 +114,9 @@ export function PlatformLayout() {
       {/* Footer */}
       <footer className="border-t border-slate-800 bg-slate-950 px-4 sm:px-6 py-2 text-xs text-slate-400 flex flex-col sm:flex-row justify-between gap-1">
         <span>BillingBuddy Platform Superadmin • Foundation Shell</span>
-        <span>Namespace: <code>/platform/*</code></span>
+        <span>
+          Namespace: <code>/platform/*</code>
+        </span>
       </footer>
     </div>
   );

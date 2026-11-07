@@ -9,7 +9,9 @@ export function PortalIndexPage() {
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col justify-center items-center px-4">
       <div className="max-w-2xl w-full text-center space-y-6">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-xs font-mono text-slate-300">
-          <span>{appName} Foundation v{version}</span>
+          <span>
+            {appName} Foundation v{version}
+          </span>
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
           <span>Dual Portal Architecture</span>
         </div>
@@ -18,7 +20,8 @@ export function PortalIndexPage() {
           Retail Operations Portal Entry
         </h1>
         <p className="text-sm text-slate-400 max-w-lg mx-auto">
-          Single React application with distinct portal routing and layout isolation. Choose a portal namespace to verify routing:
+          Single React application with distinct portal routing and layout isolation. Choose a
+          portal namespace to verify routing:
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left pt-4">
@@ -48,7 +51,9 @@ export function PortalIndexPage() {
               <span className="text-xs font-semibold uppercase tracking-wider text-emerald-400 font-mono">
                 Namespace: /owner/*
               </span>
-              <span className="text-slate-500 group-hover:text-emerald-400 transition-colors">→</span>
+              <span className="text-slate-500 group-hover:text-emerald-400 transition-colors">
+                →
+              </span>
             </div>
             <h2 className="mt-2 text-lg font-bold text-white group-hover:text-emerald-300 transition-colors">
               Store Owner Portal

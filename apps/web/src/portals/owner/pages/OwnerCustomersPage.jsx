@@ -17,7 +17,8 @@ export function OwnerCustomersPage() {
           <StatusBadge label="Namespace: /owner/customers" variant="active" />
         </div>
         <p className="text-xs text-slate-600 leading-relaxed">
-          Structural view ready for customer khata/ledger records, credit limits, and purchase histories in future work packages.
+          Structural view ready for customer khata/ledger records, credit limits, and purchase
+          histories in future work packages.
         </p>
       </div>
     </div>

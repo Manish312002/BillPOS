@@ -11,7 +11,8 @@ export function OwnerBillingPage() {
       </div>
 
       <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-700 shadow-2xs">
-        Placeholder view for POS billing register. Business logic and point-of-sale functionality will be implemented in subsequent work packages.
+        Placeholder view for POS billing register. Business logic and point-of-sale functionality
+        will be implemented in subsequent work packages.
       </div>
     </div>
   );
