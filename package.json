@@ -1,0 +1,11 @@
+{
+  "name": "billingbuddy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/web",
+    "apps/api",
+    "packages/shared"
+  ]
+}
