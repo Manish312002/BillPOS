@@ -3,13 +3,15 @@ import {
   phoneSchema,
   passwordPolicySchema,
   superadminLoginSchema,
-  otpVerificationSchema,
+  totpVerificationSchema,
+  totpEnrollmentConfirmSchema,
+  totpRecoveryVerifySchema,
   createTenantSchema,
   ownerActivationSchema,
   ownerLoginSchema,
 } from '../src/contracts/auth.contracts.js';
 
-describe('Shared Authentication Contracts & Validation Schemas', () => {
+describe('Shared Authentication Contracts & Validation Schemas (ADR-002)', () => {
   describe('phoneSchema', () => {
     it('accepts valid E.164 phone numbers', () => {
       expect(phoneSchema.parse('+918380989776')).toBe('+918380989776');
@@ -60,30 +62,50 @@ describe('Shared Authentication Contracts & Validation Schemas', () => {
     });
   });
 
-  describe('otpVerificationSchema', () => {
-    it('accepts valid challenge UUID and 6-digit numeric OTP', () => {
-      const payload = {
-        challengeId: '2e0d6b46-3e86-4e55-9561-70edda2920bd',
-        otp: '582910',
-      };
-      const parsed = otpVerificationSchema.parse(payload);
-      expect(parsed.otp).toBe('582910');
+  describe('totpVerificationSchema', () => {
+    it('accepts valid 6-digit numeric TOTP codes', () => {
+      const parsed = totpVerificationSchema.parse({ code: '582910' });
+      expect(parsed.code).toBe('582910');
     });
 
-    it('rejects non-numeric, 5-digit, 7-digit, or malformed OTPs', () => {
-      const validUUID = '2e0d6b46-3e86-4e55-9561-70edda2920bd';
-      expect(() => otpVerificationSchema.parse({ challengeId: validUUID, otp: '12345' })).toThrow(
-        /exactly 6 digits/i
-      );
-      expect(() => otpVerificationSchema.parse({ challengeId: validUUID, otp: '1234567' })).toThrow(
-        /exactly 6 digits/i
-      );
-      expect(() => otpVerificationSchema.parse({ challengeId: validUUID, otp: '12345a' })).toThrow(
-        /numerical digits/i
-      );
+    it('rejects non-numeric, 5-digit, or 7-digit TOTP codes', () => {
+      expect(() => totpVerificationSchema.parse({ code: '12345' })).toThrow(/exactly 6 digits/i);
+      expect(() => totpVerificationSchema.parse({ code: '1234567' })).toThrow(/exactly 6 digits/i);
+      expect(() => totpVerificationSchema.parse({ code: '12345a' })).toThrow(/numerical digits/i);
+    });
+  });
+
+  describe('totpEnrollmentConfirmSchema', () => {
+    it('accepts valid Base32 secret and 6-digit TOTP code', () => {
+      const parsed = totpEnrollmentConfirmSchema.parse({
+        secret: 'JBSWY3DPEHPK3PXP',
+        code: '123456',
+      });
+      expect(parsed.secret).toBe('JBSWY3DPEHPK3PXP');
+      expect(parsed.code).toBe('123456');
+    });
+
+    it('rejects non-Base32 secrets or invalid codes', () => {
       expect(() =>
-        otpVerificationSchema.parse({ challengeId: 'invalid-uuid', otp: '123456' })
-      ).toThrow(/Valid challenge UUID/i);
+        totpEnrollmentConfirmSchema.parse({
+          secret: 'invalid-base32-0189', // 0, 1, 8, 9 not in Base32
+          code: '123456',
+        })
+      ).toThrow();
+    });
+  });
+
+  describe('totpRecoveryVerifySchema', () => {
+    it('accepts valid 128-bit formatted recovery code', () => {
+      const parsed = totpRecoveryVerifySchema.parse({
+        recoveryCode: 'A1B2C3D4-E5F6A7B8-9C0D1E2F-3A4B5C6D',
+      });
+      expect(parsed.recoveryCode).toBe('A1B2C3D4-E5F6A7B8-9C0D1E2F-3A4B5C6D');
+    });
+
+    it('rejects short or empty recovery codes', () => {
+      expect(() => totpRecoveryVerifySchema.parse({ recoveryCode: 'short' })).toThrow();
+      expect(() => totpRecoveryVerifySchema.parse({ recoveryCode: '' })).toThrow();
     });
   });
 
@@ -117,20 +139,19 @@ describe('Shared Authentication Contracts & Validation Schemas', () => {
   });
 
   describe('ownerActivationSchema', () => {
-    it('accepts valid activation payload with token, 6-digit OTP, and compliant password', () => {
+    it('accepts valid activation payload with token and compliant password (no OTP required)', () => {
       const payload = {
         token: 'opaque_invitation_token_with_sufficient_length_123',
-        otp: '654321',
         password: 'NewOwnerSecurePassword2026!',
       };
       const parsed = ownerActivationSchema.parse(payload);
-      expect(parsed.otp).toBe('654321');
+      expect(parsed.token).toBe('opaque_invitation_token_with_sufficient_length_123');
+      expect(parsed.password).toBe('NewOwnerSecurePassword2026!');
     });
 
     it('rejects weak passwords during owner activation', () => {
       const payload = {
         token: 'opaque_invitation_token_with_sufficient_length_123',
-        otp: '654321',
         password: 'weak',
       };
       expect(() => ownerActivationSchema.parse(payload)).toThrow(/at least 10 characters/i);

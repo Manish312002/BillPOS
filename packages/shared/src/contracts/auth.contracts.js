@@ -37,15 +37,37 @@ export const superadminLoginSchema = z.object({
 });
 
 /**
- * OTP verification request schema
+ * RFC 6238 TOTP 6-digit code verification schema
  */
-export const otpVerificationSchema = z.object({
-  challengeId: z.string().uuid({ message: 'Valid challenge UUID is required' }),
-  otp: z
+export const totpVerificationSchema = z.object({
+  code: z
     .string()
     .trim()
-    .length(6, { message: 'OTP must be exactly 6 digits' })
-    .regex(/^\d{6}$/, { message: 'OTP must contain only numerical digits' }),
+    .length(6, { message: 'TOTP code must be exactly 6 digits' })
+    .regex(/^\d{6}$/, { message: 'TOTP code must contain only numerical digits' }),
+});
+
+/**
+ * Initial Superadmin TOTP enrollment confirmation schema
+ */
+export const totpEnrollmentConfirmSchema = z.object({
+  secret: z
+    .string()
+    .trim()
+    .min(16, { message: 'Base32 secret is required' })
+    .regex(/^[A-Z2-7]+$/i, { message: 'Secret must be valid Base32 format' }),
+  code: z
+    .string()
+    .trim()
+    .length(6, { message: 'TOTP code must be exactly 6 digits' })
+    .regex(/^\d{6}$/, { message: 'TOTP code must contain only numerical digits' }),
+});
+
+/**
+ * Superadmin recovery code verification schema
+ */
+export const totpRecoveryVerifySchema = z.object({
+  recoveryCode: z.string().trim().min(10, { message: 'Valid recovery code is required' }),
 });
 
 /**
@@ -74,15 +96,10 @@ export const resendInvitationSchema = z.object({
 });
 
 /**
- * Store Owner activation request schema
+ * Store Owner activation request schema (ADR-002: bearer token + new password)
  */
 export const ownerActivationSchema = z.object({
   token: z.string().trim().min(16, { message: 'Valid invitation token is required' }),
-  otp: z
-    .string()
-    .trim()
-    .length(6, { message: 'OTP must be exactly 6 digits' })
-    .regex(/^\d{6}$/, { message: 'OTP must contain only numerical digits' }),
   password: passwordPolicySchema,
 });
 

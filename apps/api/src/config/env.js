@@ -1,28 +1,37 @@
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 dotenv.config();
 
-const envSchema = z.object({
+export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
   API_PREFIX: z.string().default('/api'),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
+  APP_PUBLIC_URL: z.string().default('http://localhost:5173'),
   DATABASE_URL: z
     .string()
     .optional()
     .default('postgresql://postgres:postgres@localhost:5432/billingbuddy?schema=public'),
 
-  // Security & Cryptographic Pepper
-  OTP_PEPPER_SECRET: z
-    .string()
-    .min(16, { message: 'OTP_PEPPER_SECRET must be at least 16 characters' })
-    .default('dev_otp_pepper_secret_billingbuddy_2026'),
-
-  // WhatsApp Provider Configuration
-  WHATSAPP_PROVIDER: z.enum(['mock', 'meta', 'gupshup', 'twilio']).default('mock'),
-  WHATSAPP_API_KEY: z.string().optional(),
-  WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
+  // Cryptographic Secrets (Required: strictly 32-byte UTF-8 or 64-hexadecimal characters)
+  TOTP_ENCRYPTION_KEY: z
+    .string({ required_error: 'TOTP_ENCRYPTION_KEY is required' })
+    .min(1, { message: 'TOTP_ENCRYPTION_KEY cannot be empty' })
+    .refine(
+      (val) => {
+        if (/^[0-9a-fA-F]{64}$/.test(val)) return true;
+        return Buffer.byteLength(val, 'utf8') === 32;
+      },
+      {
+        message:
+          'TOTP_ENCRYPTION_KEY must be a valid 32-byte key (either exactly 32 UTF-8 characters or 64 hexadecimal characters)',
+      }
+    ),
 
   // Root Superadmin Bootstrap Defaults
   ROOT_SUPERADMIN_PHONE: z.string().default('+918380989776'),
