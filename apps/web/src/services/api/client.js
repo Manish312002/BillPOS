@@ -6,9 +6,11 @@ const apiPrefix = import.meta.env.VITE_API_PREFIX || '/api';
 export const apiClient = axios.create({
   baseURL: `${baseURL}${apiPrefix}`,
   timeout: 10000,
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
     Accept: 'application/json',
+    'X-Requested-With': 'XMLHttpRequest',
   },
 });
 

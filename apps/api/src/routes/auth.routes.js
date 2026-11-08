@@ -11,6 +11,7 @@ import {
   authenticate,
   requireSuperadmin,
   requireSecondFactorComplete,
+  requireRecoveryCodeAckComplete,
   requirePasswordChangeComplete,
 } from '../middleware/auth.js';
 import { csrfProtection } from '../middleware/csrf.js';
@@ -125,6 +126,7 @@ router.post('/superadmin/totp/confirm', authenticate, requireSuperadmin, async (
       recoveryCodes: result.recoveryCodes,
       mustChangePassword: result.mustChangePassword,
       user: result.user,
+      isRecoveryCodeAckPending: result.isRecoveryCodeAckPending ?? true,
     };
 
     return res
@@ -157,6 +159,7 @@ router.post('/superadmin/totp/verify', authenticate, requireSuperadmin, async (r
     const responseData = {
       mustChangePassword: result.mustChangePassword,
       user: result.user,
+      isRecoveryCodeAckPending: result.isRecoveryCodeAckPending ?? false,
     };
 
     return res
@@ -194,6 +197,7 @@ router.post(
         remainingRecoveryCodesCount: result.remainingRecoveryCodesCount,
         mustChangePassword: result.mustChangePassword,
         user: result.user,
+        isRecoveryCodeAckPending: result.isRecoveryCodeAckPending ?? false,
       };
 
       return res
@@ -201,6 +205,56 @@ router.post(
         .json(
           successResponse(responseData, 'Emergency recovery code accepted. Session authenticated.')
         );
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * POST /api/auth/superadmin/recovery-codes/acknowledge
+ * Confirms that the administrator has securely retained the emergency recovery codes.
+ * Atomically marks acknowledgment complete on the server session and UserTotp.
+ */
+router.post(
+  '/superadmin/recovery-codes/acknowledge',
+  authenticate,
+  requireSuperadmin,
+  async (req, res, next) => {
+    try {
+      const result = await authService.acknowledgeRecoveryCodes({
+        userId: req.user.id,
+        sessionId: req.session.id,
+      });
+
+      return res
+        .status(200)
+        .json(successResponse(result, 'Recovery codes acknowledged successfully'));
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * POST /api/auth/superadmin/recovery-codes/regenerate
+ * Regenerates a fresh set of recovery codes while acknowledgment is pending.
+ * Invalidates prior codes and keeps acknowledgment pending.
+ */
+router.post(
+  '/superadmin/recovery-codes/regenerate',
+  authenticate,
+  requireSuperadmin,
+  async (req, res, next) => {
+    try {
+      const result = await authService.regenerateRecoveryCodes({
+        userId: req.user.id,
+        sessionId: req.session.id,
+      });
+
+      return res
+        .status(200)
+        .json(successResponse(result, 'Recovery codes regenerated successfully'));
     } catch (err) {
       next(err);
     }
@@ -265,23 +319,41 @@ router.get('/me', authenticate, (req, res) => {
         id: req.session.id,
         sessionType: req.session.sessionType,
         isSecondFactorPending: req.session.isSecondFactorPending,
+        isRecoveryCodeAckPending: req.session.isRecoveryCodeAckPending ?? false,
         idleExpiresAt: req.session.idleExpiresAt,
         absoluteExpiresAt: req.session.absoluteExpiresAt,
       },
       platformRole: req.platformRole,
+      activeTenant: req.activeTenant || null,
+      tenantMemberships: (req.tenantMemberships || []).map((m) => ({
+        id: m.id,
+        tenantId: m.tenantId,
+        role: m.role,
+        status: m.status,
+        tenant: m.tenant
+          ? {
+              id: m.tenant.id,
+              slug: m.tenant.slug,
+              legalName: m.tenant.legalName,
+              tradeName: m.tenant.tradeName,
+              status: m.tenant.status,
+            }
+          : null,
+      })),
     })
   );
 });
 
 /**
  * GET /api/auth/superadmin/dashboard-access
- * Privileged route verifying SEC-AUTH-08: both 2FA and password-change must be completed.
+ * Privileged route verifying SEC-AUTH-08: 2FA, recovery code ack, and password-change must be completed.
  */
 router.get(
   '/superadmin/dashboard-access',
   authenticate,
   requireSuperadmin,
   requireSecondFactorComplete,
+  requireRecoveryCodeAckComplete,
   requirePasswordChangeComplete,
   (req, res) => {
     return res.status(200).json(

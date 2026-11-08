@@ -26,7 +26,14 @@ const TOTP_MAX_FAILED_ATTEMPTS = 5;
  * Transactionally revokes an old pending session and creates a new fully authenticated session.
  * Enforces SEC-AUTH-01 (Session rotation on privilege escalation).
  */
-async function rotateSessionToFullyAuthenticated(tx, oldSessionId, userId, ipAddress, userAgent) {
+async function rotateSessionToFullyAuthenticated(
+  tx,
+  oldSessionId,
+  userId,
+  ipAddress,
+  userAgent,
+  options = {}
+) {
   if (oldSessionId) {
     await tx.session.updateMany({
       where: { id: oldSessionId, revokedAt: null },
@@ -44,6 +51,7 @@ async function rotateSessionToFullyAuthenticated(tx, oldSessionId, userId, ipAdd
       sessionTokenHash: newSessionTokenHash,
       sessionType: 'PLATFORM',
       isSecondFactorPending: false,
+      isRecoveryCodeAckPending: Boolean(options.isRecoveryCodeAckPending),
       idleExpiresAt: new Date(now.getTime() + SUPERADMIN_IDLE_TIMEOUT_MS),
       absoluteExpiresAt: new Date(now.getTime() + SUPERADMIN_ABSOLUTE_TIMEOUT_MS),
       ipAddress: ipAddress || null,
@@ -55,6 +63,7 @@ async function rotateSessionToFullyAuthenticated(tx, oldSessionId, userId, ipAdd
   return {
     newSessionToken,
     newSessionId: newSession.id,
+    isRecoveryCodeAckPending: newSession.isRecoveryCodeAckPending,
   };
 }
 
@@ -375,13 +384,14 @@ export async function confirmTotpEnrollment({
       throw err;
     }
 
-    // SEC-AUTH-01: Session rotation on privilege elevation
+    // SEC-AUTH-01: Session rotation on privilege elevation with pending recovery code acknowledgment
     rotatedSession = await rotateSessionToFullyAuthenticated(
       tx,
       sessionId,
       userId,
       ipAddress,
-      userAgent
+      userAgent,
+      { isRecoveryCodeAckPending: true }
     );
 
     await tx.user.update({
@@ -396,6 +406,7 @@ export async function confirmTotpEnrollment({
     newSessionId: rotatedSession.newSessionId,
     mustChangePassword: totp.user.mustChangePassword,
     user: sanitizeUser(totp.user),
+    isRecoveryCodeAckPending: true,
   };
 }
 
@@ -501,12 +512,15 @@ export async function verifyTotpLogin({ userId, code, sessionId, ipAddress, user
     }
 
     // SEC-AUTH-01: Session rotation on privilege elevation
+    // If the user never acknowledged recovery codes, preserve pending acknowledgment restriction
+    const isAckPending = totp.recoveryCodesAcknowledgedAt === null;
     rotatedSession = await rotateSessionToFullyAuthenticated(
       tx,
       sessionId,
       userId,
       ipAddress,
-      userAgent
+      userAgent,
+      { isRecoveryCodeAckPending: isAckPending }
     );
 
     await tx.user.update({
@@ -520,6 +534,7 @@ export async function verifyTotpLogin({ userId, code, sessionId, ipAddress, user
     newSessionId: rotatedSession.newSessionId,
     user: sanitizeUser(totp.user),
     mustChangePassword: totp.user.mustChangePassword,
+    isRecoveryCodeAckPending: rotatedSession.isRecoveryCodeAckPending,
   };
 }
 
@@ -600,12 +615,16 @@ export async function verifyRecoveryCodeLogin({
     }
 
     // SEC-AUTH-01: Session rotation on privilege elevation
+    // Consuming a recovery code authenticates the session, but does NOT automatically mark
+    // recovery-code acknowledgment complete. If acknowledgment is pending, it must be retained.
+    const isAckPending = totp.recoveryCodesAcknowledgedAt === null;
     rotatedSession = await rotateSessionToFullyAuthenticated(
       tx,
       sessionId,
       userId,
       ipAddress,
-      userAgent
+      userAgent,
+      { isRecoveryCodeAckPending: isAckPending }
     );
 
     await tx.user.update({
@@ -624,6 +643,7 @@ export async function verifyRecoveryCodeLogin({
     user: sanitizeUser(totp.user),
     mustChangePassword: totp.user.mustChangePassword,
     remainingRecoveryCodesCount: updatedTotp.recoveryCodeHashes.length,
+    isRecoveryCodeAckPending: rotatedSession.isRecoveryCodeAckPending,
   };
 }
 
@@ -713,5 +733,138 @@ export async function logout({ sessionId }) {
   await prisma.session.updateMany({
     where: { id: sessionId, revokedAt: null },
     data: { revokedAt: new Date() },
+  });
+}
+
+/**
+ * Acknowledges emergency recovery codes and marks the server session fully un-restricted.
+ * Rejects repeated or invalid transitions atomically using PostgreSQL row-level locking.
+ */
+export async function acknowledgeRecoveryCodes({ userId, sessionId }) {
+  if (!userId || !sessionId) {
+    const err = new Error('User ID and Session ID are required');
+    err.statusCode = 400;
+    err.code = 'BAD_REQUEST';
+    throw err;
+  }
+
+  return await prisma.$transaction(async (tx) => {
+    // 1. Atomically check and update session with conditional state check
+    const updateResult = await tx.session.updateMany({
+      where: {
+        id: sessionId,
+        userId,
+        isRecoveryCodeAckPending: true,
+        revokedAt: null,
+      },
+      data: { isRecoveryCodeAckPending: false },
+    });
+
+    if (updateResult.count === 0) {
+      const existing = await tx.session.findUnique({ where: { id: sessionId } });
+      if (!existing || existing.userId !== userId || existing.revokedAt !== null) {
+        const err = new Error('Session is invalid or revoked');
+        err.statusCode = 401;
+        err.code = 'UNAUTHORIZED';
+        throw err;
+      }
+
+      const err = new Error('Recovery-code acknowledgment is not pending for this session');
+      err.statusCode = 400;
+      err.code = 'ACK_NOT_PENDING';
+      throw err;
+    }
+
+    // 2. Validate UserTotp
+    const totp = await tx.userTotp.findUnique({
+      where: { userId },
+    });
+
+    if (!totp || !totp.isEnabled) {
+      const err = new Error('Two-factor authentication is not active');
+      err.statusCode = 400;
+      err.code = 'INVALID_STATE';
+      throw err;
+    }
+
+    const now = new Date();
+
+    // 3. Record acknowledgment timestamp
+    await tx.userTotp.update({
+      where: { id: totp.id },
+      data: { recoveryCodesAcknowledgedAt: now },
+    });
+
+    const user = await tx.user.findUnique({ where: { id: userId } });
+
+    return {
+      acknowledged: true,
+      acknowledgedAt: now,
+      user: sanitizeUser(user),
+    };
+  });
+}
+
+/**
+ * Regenerates a fresh set of emergency recovery codes while acknowledgment is pending.
+ * Invalidates previously generated codes and keeps acknowledgment pending.
+ */
+export async function regenerateRecoveryCodes({ userId, sessionId }) {
+  if (!userId || !sessionId) {
+    const err = new Error('User ID and Session ID are required');
+    err.statusCode = 400;
+    err.code = 'BAD_REQUEST';
+    throw err;
+  }
+
+  return await prisma.$transaction(async (tx) => {
+    // 1. Validate session and ensure acknowledgment is pending
+    const session = await tx.session.findUnique({
+      where: { id: sessionId },
+    });
+
+    if (!session || session.userId !== userId || session.revokedAt !== null) {
+      const err = new Error('Session is invalid or revoked');
+      err.statusCode = 401;
+      err.code = 'UNAUTHORIZED';
+      throw err;
+    }
+
+    if (!session.isRecoveryCodeAckPending) {
+      const err = new Error(
+        'Recovery-code regeneration is only permitted while acknowledgment is pending'
+      );
+      err.statusCode = 403;
+      err.code = 'FORBIDDEN';
+      throw err;
+    }
+
+    // 2. Validate UserTotp
+    const totp = await tx.userTotp.findUnique({
+      where: { userId },
+    });
+
+    if (!totp || !totp.isEnabled) {
+      const err = new Error('Two-factor authentication is not active');
+      err.statusCode = 400;
+      err.code = 'INVALID_STATE';
+      throw err;
+    }
+
+    // 3. Generate fresh 8 recovery codes
+    const newRecoveryCodes = generateRecoveryCodes(8);
+    const newRecoveryCodeHashes = newRecoveryCodes.map(hashRecoveryCode);
+
+    // 4. Atomically overwrite old recovery code hashes with new hashes
+    await tx.userTotp.update({
+      where: { id: totp.id },
+      data: {
+        recoveryCodeHashes: newRecoveryCodeHashes,
+      },
+    });
+
+    return {
+      recoveryCodes: newRecoveryCodes,
+    };
   });
 }

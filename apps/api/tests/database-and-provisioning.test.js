@@ -45,6 +45,11 @@ describe('Root Superadmin Provisioning & Phone / Password Utilities', () => {
   });
 
   it('is strictly idempotent and preserves existing root superadmin password on re-seed', async () => {
+    await prisma.user.updateMany({
+      where: { phone: '+918380989776' },
+      data: { mustChangePassword: true },
+    });
+
     const rootUser = await prisma.user.findUnique({
       where: { phone: '+918380989776' },
       include: { platformAuthorization: true },

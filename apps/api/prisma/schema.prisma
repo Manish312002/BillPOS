@@ -79,13 +79,14 @@ model UserTotp {
   userId             String    @unique
   user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   secretEncrypted    String
-  isEnabled          Boolean   @default(false)
-  lastAcceptedStep   Int?
-  recoveryCodeHashes String[]  @default([])
-  failedAttempts     Int       @default(0)
-  lockedUntil        DateTime?
-  confirmedAt        DateTime?
-  createdAt          DateTime  @default(now())
+  isEnabled                   Boolean   @default(false)
+  lastAcceptedStep            Int?
+  recoveryCodeHashes          String[]  @default([])
+  failedAttempts              Int       @default(0)
+  lockedUntil                 DateTime?
+  confirmedAt                 DateTime?
+  recoveryCodesAcknowledgedAt DateTime?
+  createdAt                   DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
   @@index([userId])
@@ -166,9 +167,10 @@ model Session {
   user                  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   activeTenantId        String?
   activeTenant          Tenant?     @relation(fields: [activeTenantId], references: [id], onDelete: Cascade)
-  sessionType           SessionType
-  isSecondFactorPending Boolean     @default(false)
-  lastActivityAt        DateTime    @default(now())
+  sessionType              SessionType
+  isSecondFactorPending    Boolean     @default(false)
+  isRecoveryCodeAckPending Boolean     @default(false)
+  lastActivityAt           DateTime    @default(now())
   idleExpiresAt         DateTime
   absoluteExpiresAt     DateTime
   revokedAt             DateTime?

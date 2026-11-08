@@ -1,10 +1,20 @@
 import React, { useState } from 'react';
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useDispatch, useSelector } from 'react-redux';
+import { logoutUser } from '../app/store/authSlice.js';
 import StatusBadge from '../components/shared/StatusBadge.jsx';
 
 export function OwnerLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
+  const dispatch = useDispatch();
+  const { user } = useSelector((state) => state.auth);
+
+  const handleLogout = async () => {
+    await dispatch(logoutUser());
+    navigate('/owner/login', { replace: true });
+  };
 
   const navItems = [
     { label: 'Store Overview', path: '/owner/overview' },
@@ -57,15 +67,18 @@ export function OwnerLayout() {
 
         <div className="flex items-center space-x-3">
           <StatusBadge label="Register: Ready" variant="active" />
-          <span className="hidden md:inline-flex text-xs font-mono text-emerald-300/70">
-            Route: {location.pathname}
-          </span>
-          <NavLink
-            to="/"
-            className="text-xs px-2.5 py-1 rounded bg-emerald-900 text-emerald-200 hover:text-white hover:bg-emerald-800 transition-colors"
+          {user && (
+            <span className="hidden md:inline-flex text-xs font-mono text-emerald-300/80">
+              {user.fullName || user.phone}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="text-xs px-2.5 py-1 rounded bg-emerald-900 text-emerald-200 hover:text-rose-300 hover:bg-emerald-800 transition-colors cursor-pointer"
           >
-            Switch Portal
-          </NavLink>
+            Sign Out
+          </button>
         </div>
       </header>
 

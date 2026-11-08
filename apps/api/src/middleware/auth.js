@@ -49,8 +49,14 @@ export async function authenticate(req, res, next) {
         user: {
           include: {
             platformAuthorization: true,
+            tenantMemberships: {
+              include: {
+                tenant: true,
+              },
+            },
           },
         },
+        activeTenant: true,
       },
     });
 
@@ -108,6 +114,8 @@ export async function authenticate(req, res, next) {
     req.session = session;
     req.user = session.user;
     req.platformRole = session.user.platformAuthorization?.role || null;
+    req.tenantMemberships = session.user.tenantMemberships || [];
+    req.activeTenant = session.activeTenant || null;
 
     next();
   } catch (err) {
@@ -123,6 +131,25 @@ export function requireSecondFactorComplete(req, res, next) {
     return res
       .status(403)
       .json(errorResponse('Second-factor verification required', null, 'SECOND_FACTOR_REQUIRED'));
+  }
+  next();
+}
+
+/**
+ * Enforces that emergency recovery-code acknowledgment has been confirmed by the server.
+ * Blocks access to protected platform resources while acknowledgment is pending.
+ */
+export function requireRecoveryCodeAckComplete(req, res, next) {
+  if (req.session && req.session.isRecoveryCodeAckPending) {
+    return res
+      .status(403)
+      .json(
+        errorResponse(
+          'Recovery-code acknowledgment is required before accessing privileged resources',
+          null,
+          'RECOVERY_CODE_ACK_REQUIRED'
+        )
+      );
   }
   next();
 }
@@ -153,4 +180,104 @@ export function requireSuperadmin(req, res, next) {
     return res.status(403).json(errorResponse('Superadmin privileges required', null, 'FORBIDDEN'));
   }
   next();
+}
+
+/**
+ * Enforces Store Owner authorization and server-side tenant membership validation.
+ * - Rejects Superadmins (portal isolation).
+ * - Rejects users without an ACTIVE Store Owner membership.
+ * - Rejects if the tenant organization is SUSPENDED.
+ * - Never trusts client-supplied role or tenant IDs as proof of authorization.
+ */
+export function requireStoreOwner(req, res, next) {
+  // 1. Portal isolation: Superadmins cannot access Store Owner resources directly
+  if (req.platformRole === 'SUPERADMIN') {
+    return res
+      .status(403)
+      .json(
+        errorResponse(
+          'Superadmins are not authorized to access Store Owner resources directly',
+          null,
+          'FORBIDDEN'
+        )
+      );
+  }
+
+  // 2. Resolve membership for active tenant or matching STORE_OWNER role
+  const targetTenantId = req.session.activeTenantId || req.params.tenantId;
+  const memberships = req.tenantMemberships || [];
+
+  const membership = targetTenantId
+    ? memberships.find((m) => m.tenantId === targetTenantId)
+    : memberships.find((m) => m.role === 'STORE_OWNER');
+
+  if (!membership || membership.role !== 'STORE_OWNER') {
+    return res
+      .status(403)
+      .json(errorResponse('Store Owner privileges required', null, 'FORBIDDEN'));
+  }
+
+  // 3. Verify server-side membership status
+  if (membership.status !== 'ACTIVE') {
+    return res
+      .status(403)
+      .json(
+        errorResponse('Tenant membership is inactive or suspended', null, 'MEMBERSHIP_INACTIVE')
+      );
+  }
+
+  // 4. Verify tenant organization status
+  if (membership.tenant && membership.tenant.status === 'SUSPENDED') {
+    return res
+      .status(403)
+      .json(errorResponse('Tenant organization is suspended', null, 'TENANT_SUSPENDED'));
+  }
+
+  req.currentMembership = membership;
+  req.currentTenant = membership.tenant;
+  next();
+}
+
+/**
+ * Factory for enforcing tenant membership with specific role requirements.
+ */
+export function requireTenantMembership(requiredRole = null) {
+  return (req, res, next) => {
+    const targetTenantId = req.session.activeTenantId || req.params.tenantId;
+    const memberships = req.tenantMemberships || [];
+
+    const membership = targetTenantId
+      ? memberships.find((m) => m.tenantId === targetTenantId)
+      : memberships[0];
+
+    if (!membership) {
+      return res
+        .status(403)
+        .json(errorResponse('Valid tenant membership required', null, 'FORBIDDEN'));
+    }
+
+    if (membership.status !== 'ACTIVE') {
+      return res
+        .status(403)
+        .json(
+          errorResponse('Tenant membership is inactive or suspended', null, 'MEMBERSHIP_INACTIVE')
+        );
+    }
+
+    if (membership.tenant && membership.tenant.status === 'SUSPENDED') {
+      return res
+        .status(403)
+        .json(errorResponse('Tenant organization is suspended', null, 'TENANT_SUSPENDED'));
+    }
+
+    if (requiredRole && membership.role !== requiredRole) {
+      return res
+        .status(403)
+        .json(errorResponse(`Requires ${requiredRole} role`, null, 'FORBIDDEN'));
+    }
+
+    req.currentMembership = membership;
+    req.currentTenant = membership.tenant;
+    next();
+  };
 }

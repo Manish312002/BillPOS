@@ -4,10 +4,33 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Provider } from 'react-redux';
 import { store } from '../src/app/store/index.js';
+import { setAuthState, setSessionData, AUTH_STATES } from '../src/app/store/authSlice.js';
 import { AppRouter } from '../src/app/router/index.jsx';
 import { apiClient } from '../src/services/api/client.js';
 
-function renderWithProviders(initialRoute = '/') {
+function renderWithProviders(initialRoute = '/', customAuthState = null) {
+  if (customAuthState) {
+    store.dispatch(setAuthState(customAuthState));
+  } else if (initialRoute.startsWith('/platform')) {
+    store.dispatch(
+      setSessionData({
+        platformRole: 'SUPERADMIN',
+        user: { id: 'admin-1', fullName: 'Superadmin User', email: 'admin@billingbuddy.com' },
+      })
+    );
+  } else if (initialRoute.startsWith('/owner')) {
+    store.dispatch(
+      setSessionData({
+        session: { sessionType: 'TENANT' },
+        activeTenant: { id: 'tenant-1', name: 'Store #101' },
+        tenantMemberships: [{ role: 'STORE_OWNER', status: 'ACTIVE', tenantId: 'tenant-1' }],
+        user: { id: 'owner-1', fullName: 'Store Owner', phone: '+919876543210' },
+      })
+    );
+  } else {
+    store.dispatch(setAuthState(AUTH_STATES.UNAUTHENTICATED));
+  }
+
   return render(
     <Provider store={store}>
       <MemoryRouter initialEntries={[initialRoute]}>

@@ -1,14 +1,25 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter } from 'react-router-dom';
-import { Provider } from 'react-redux';
+import { Provider, useDispatch } from 'react-redux';
 import { store } from './app/store/index.js';
+import { restoreSession } from './app/store/authSlice.js';
 import { AppRouter } from './app/router/index.jsx';
+
+function AppInitializer() {
+  const dispatch = useDispatch();
+
+  useEffect(() => {
+    dispatch(restoreSession());
+  }, [dispatch]);
+
+  return <AppRouter />;
+}
 
 export function App() {
   return (
     <Provider store={store}>
       <BrowserRouter>
-        <AppRouter />
+        <AppInitializer />
       </BrowserRouter>
     </Provider>
   );

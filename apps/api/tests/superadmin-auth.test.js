@@ -612,6 +612,13 @@ describe('Superadmin Authentication, TOTP & Security Hardening (ADR-002 / WP-02.
 
       const privilegedToken = extractSessionCookie(verifyRes);
 
+      // Acknowledge recovery codes so the recovery-code gate is satisfied
+      // and we isolate the mandatory password-change gate
+      await request(app)
+        .post('/api/auth/superadmin/recovery-codes/acknowledge')
+        .set('Authorization', `Bearer ${privilegedToken}`)
+        .set('X-Requested-With', 'XMLHttpRequest');
+
       // Accessing /superadmin/dashboard-access must fail with 403 PASSWORD_CHANGE_REQUIRED
       const accessRes = await request(app)
         .get('/api/auth/superadmin/dashboard-access')
