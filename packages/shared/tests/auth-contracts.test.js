@@ -8,6 +8,10 @@ import {
   totpRecoveryVerifySchema,
   changePasswordSchema,
   createTenantSchema,
+  tenantIdParamSchema,
+  suspendTenantSchema,
+  reactivateTenantSchema,
+  validateInvitationSchema,
   ownerActivationSchema,
   ownerLoginSchema,
 } from '../src/contracts/auth.contracts.js';
@@ -174,6 +178,21 @@ describe('Shared Authentication Contracts & Validation Schemas (ADR-002)', () =>
     });
   });
 
+  describe('validateInvitationSchema', () => {
+    it('accepts valid invitation tokens of at least 16 characters', () => {
+      const payload = { token: 'valid_invitation_token_12345' };
+      const parsed = validateInvitationSchema.parse(payload);
+      expect(parsed.token).toBe('valid_invitation_token_12345');
+    });
+
+    it('rejects short or empty tokens', () => {
+      expect(() => validateInvitationSchema.parse({ token: 'short' })).toThrow(
+        /Valid invitation token is required/i
+      );
+      expect(() => validateInvitationSchema.parse({ token: '' })).toThrow();
+    });
+  });
+
   describe('ownerActivationSchema', () => {
     it('accepts valid activation payload with token and compliant password (no OTP required)', () => {
       const payload = {
@@ -203,6 +222,42 @@ describe('Shared Authentication Contracts & Validation Schemas (ADR-002)', () =>
       };
       const parsed = ownerLoginSchema.parse(payload);
       expect(parsed.tenantSlug).toBe('metro-mart-pune');
+    });
+  });
+
+  describe('tenantIdParamSchema', () => {
+    it('accepts valid UUID strings', () => {
+      const validUuid = '123e4567-e89b-12d3-a456-426614174000';
+      const parsed = tenantIdParamSchema.parse({ tenantId: validUuid });
+      expect(parsed.tenantId).toBe(validUuid);
+    });
+
+    it('rejects invalid UUID format', () => {
+      expect(() => tenantIdParamSchema.parse({ tenantId: 'not-a-uuid' })).toThrow(/Invalid tenant UUID format/i);
+    });
+  });
+
+  describe('suspendTenantSchema & reactivateTenantSchema', () => {
+    it('accepts empty object or undefined/null reason', () => {
+      expect(suspendTenantSchema.parse({})).toEqual({});
+      expect(suspendTenantSchema.parse({ reason: undefined })).toEqual({ reason: undefined });
+      expect(suspendTenantSchema.parse({ reason: null })).toEqual({ reason: null });
+
+      expect(reactivateTenantSchema.parse({})).toEqual({});
+      expect(reactivateTenantSchema.parse({ reason: undefined })).toEqual({ reason: undefined });
+      expect(reactivateTenantSchema.parse({ reason: null })).toEqual({ reason: null });
+    });
+
+    it('accepts valid string reasons within 500 characters', () => {
+      const reason = 'Store requested temporary freeze during inventory audit.';
+      expect(suspendTenantSchema.parse({ reason })).toEqual({ reason });
+      expect(reactivateTenantSchema.parse({ reason })).toEqual({ reason });
+    });
+
+    it('rejects reasons exceeding 500 characters', () => {
+      const longReason = 'a'.repeat(501);
+      expect(() => suspendTenantSchema.parse({ reason: longReason })).toThrow(/cannot exceed 500 characters/i);
+      expect(() => reactivateTenantSchema.parse({ reason: longReason })).toThrow(/cannot exceed 500 characters/i);
     });
   });
 });

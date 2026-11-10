@@ -100,17 +100,17 @@ export function ProtectedRoute({ allowedPortal }) {
 
     // Resolve tenant membership
     const memberships = tenantMemberships || [];
-    const activeMembership = activeTenant?.id
-      ? memberships.find((m) => m.tenantId === activeTenant.id)
-      : memberships.find((m) => m.role === 'STORE_OWNER');
+    const activeMembership =
+      (activeTenant?.id ? memberships.find((m) => m.tenantId === activeTenant.id) : null) ||
+      memberships.find((m) => m.role === 'STORE_OWNER');
 
     if (!activeMembership || activeMembership.role !== 'STORE_OWNER') {
       return (
         <AccessDeniedPage
           title="403 — Membership Required"
           message="An active Store Owner membership is required to access store operations."
-          returnPath="/"
-          returnLabel="Return to Portal Index"
+          returnPath="/owner/login"
+          returnLabel="Return to Store Owner Login"
         />
       );
     }
@@ -121,8 +121,8 @@ export function ProtectedRoute({ allowedPortal }) {
         <AccessDeniedPage
           title="403 — Membership Inactive"
           message="Your store membership is currently inactive or suspended. Please contact platform administration."
-          returnPath="/"
-          returnLabel="Return to Portal Index"
+          returnPath="/owner/login"
+          returnLabel="Return to Store Owner Login"
         />
       );
     }
@@ -133,8 +133,8 @@ export function ProtectedRoute({ allowedPortal }) {
         <AccessDeniedPage
           title="403 — Store Suspended"
           message="This store organization is currently suspended. Access to billing and POS features is disabled."
-          returnPath="/"
-          returnLabel="Return to Portal Index"
+          returnPath="/owner/login"
+          returnLabel="Return to Store Owner Login"
         />
       );
     }
@@ -142,7 +142,7 @@ export function ProtectedRoute({ allowedPortal }) {
     return <Outlet />;
   }
 
-  return <Navigate to="/" replace />;
+  return <Navigate to="/owner/login" replace />;
 }
 
 export default ProtectedRoute;

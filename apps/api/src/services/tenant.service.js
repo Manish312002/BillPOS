@@ -1,11 +1,14 @@
 import { prisma } from '../db/client.js';
 import { env } from '../config/env.js';
+import { normalizePhone, normalizeEmail, AUDIT_MODULES, AUDIT_STATUS } from '@billingbuddy/shared';
 import { generateOpaqueToken, hashToken } from '../utils/security.js';
 import {
   generateInvitationMessage,
   generateWhatsAppLink,
   normalizeWhatsAppPhone,
 } from '../utils/whatsapp.js';
+import { recordAuditEvent } from './audit.service.js';
+import { assertPrivilegedMutationAuthorized } from './privilegedAuth.service.js';
 
 /**
  * Derives deterministic invitation lifecycle status adhering to ADR-002 precedence:
@@ -95,8 +98,8 @@ export async function createTenant({
   const trimmedLegalName = legalName.trim();
   const trimmedTradeName = tradeName && typeof tradeName === 'string' ? tradeName.trim() : null;
   const trimmedOwnerFullName = ownerFullName.trim();
-  const normalizedPhone = ownerPhone.trim();
-  const normalizedEmail = ownerEmail.trim().toLowerCase();
+  const normalizedPhone = normalizePhone(ownerPhone) || ownerPhone.trim();
+  const normalizedEmail = normalizeEmail(ownerEmail) || ownerEmail.trim().toLowerCase();
 
   // 1. Preflight uniqueness check for tenant slug
   const existingTenant = await prisma.tenant.findUnique({
@@ -122,7 +125,10 @@ export async function createTenant({
   try {
     // 4. Atomic transaction creating Tenant, OnboardingProgress, OwnerInvitation, and AuditLog
     createdRecords = await prisma.$transaction(async (tx) => {
-      // 4a. Create Tenant with INVITED status
+      // 4a. Transaction-level authorization guard for privileged mutation
+      await assertPrivilegedMutationAuthorized(tx, actorUserId);
+
+      // 4b. Create Tenant with INVITED status
       const tenant = await tx.tenant.create({
         data: {
           slug: normalizedSlug,
@@ -156,26 +162,28 @@ export async function createTenant({
       });
 
       // 4d. Record AuditLog entry with strictly safe metadata (zero secrets/tokens)
-      const auditLog = await tx.auditLog.create({
-        data: {
-          actorUserId: actorUserId || null,
-          targetTenantId: tenant.id,
-          eventType: 'TENANT_CREATED',
-          action: 'CREATE_TENANT',
-          resourceType: 'TENANT',
-          resourceId: tenant.id,
-          metadata: {
-            slug: normalizedSlug,
-            legalName: trimmedLegalName,
-            tradeName: trimmedTradeName,
-            nominatedPhone: normalizedPhone,
-            nominatedEmail: normalizedEmail,
-            ownerFullName: trimmedOwnerFullName,
-            invitationId: ownerInvitation.id,
-          },
-          ipAddress: ipAddress || null,
-          userAgent: userAgent || null,
+      const auditLog = await recordAuditEvent({
+        tx,
+        actorUserId: actorUserId || null,
+        actorRole: 'SUPERADMIN',
+        targetTenantId: tenant.id,
+        module: AUDIT_MODULES.TENANT,
+        eventType: 'TENANT_CREATED',
+        action: 'CREATE_TENANT',
+        status: AUDIT_STATUS.SUCCESS,
+        resourceType: 'TENANT',
+        resourceId: tenant.id,
+        metadata: {
+          slug: normalizedSlug,
+          legalName: trimmedLegalName,
+          tradeName: trimmedTradeName,
+          nominatedPhone: normalizedPhone,
+          nominatedEmail: normalizedEmail,
+          ownerFullName: trimmedOwnerFullName,
+          invitationId: ownerInvitation.id,
         },
+        ipAddress: ipAddress || null,
+        userAgent: userAgent || null,
       });
 
       return { tenant, onboardingProgress, ownerInvitation, auditLog };
@@ -235,6 +243,166 @@ export async function createTenant({
 }
 
 /**
+ * Reissues a Store Owner invitation for an existing tenant.
+ * - Atomically marks any existing PENDING invitations as SUPERSEDED.
+ * - Generates a new 256-bit bearer token expiring in 12 hours.
+ * - Stores only the SHA-256 hash at rest.
+ * - Records an append-only TENANT_INVITATION_RESENT audit log.
+ * - Constructs new activationUrl (#token=) and WhatsApp Click-to-Chat URL.
+ * - Returns ephemeral credentials for sharing.
+ */
+export async function resendInvitation({ tenantId, actorUserId, ipAddress, userAgent }) {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    include: {
+      invitations: {
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: 1,
+      },
+    },
+  });
+
+  if (!tenant) {
+    const err = new Error('Tenant not found');
+    err.statusCode = 404;
+    err.code = 'TENANT_NOT_FOUND';
+    throw err;
+  }
+
+  if (tenant.status === 'SUSPENDED') {
+    const err = new Error('Cannot reissue invitation for a suspended tenant');
+    err.statusCode = 403;
+    err.code = 'TENANT_SUSPENDED';
+    throw err;
+  }
+
+  const previousInvitation =
+    tenant.invitations && tenant.invitations.length > 0 ? tenant.invitations[0] : null;
+  if (!previousInvitation) {
+    const err = new Error('No prior invitation found for this tenant');
+    err.statusCode = 404;
+    err.code = 'INVITATION_NOT_FOUND';
+    throw err;
+  }
+
+  if (previousInvitation.status === 'ACCEPTED') {
+    const err = new Error('Store Owner has already accepted the invitation');
+    err.statusCode = 400;
+    err.code = 'INVITATION_ALREADY_ACCEPTED';
+    throw err;
+  }
+
+  const rawToken = generateOpaqueToken(32);
+  const tokenHash = hashToken(rawToken);
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 12 * 60 * 60 * 1000);
+
+  const newInvitation = await prisma.$transaction(async (tx) => {
+    // 0. Transaction-level authorization guard for privileged mutation
+    await assertPrivilegedMutationAuthorized(tx, actorUserId);
+
+    // 1. Supersede any prior PENDING invitations for this tenant
+    await tx.ownerInvitation.updateMany({
+      where: {
+        tenantId: tenant.id,
+        status: 'PENDING',
+      },
+      data: {
+        status: 'SUPERSEDED',
+        revokedAt: now,
+      },
+    });
+
+    // 2. Create new OwnerInvitation
+    const createdInvitation = await tx.ownerInvitation.create({
+      data: {
+        tenantId: tenant.id,
+        invitedEmail: previousInvitation.invitedEmail,
+        invitedPhone: previousInvitation.invitedPhone,
+        tokenHash,
+        status: 'PENDING',
+        expiresAt,
+        createdById: actorUserId || null,
+      },
+    });
+
+    // 3. Record AuditLog
+    await recordAuditEvent({
+      tx,
+      actorUserId: actorUserId || null,
+      actorRole: 'SUPERADMIN',
+      targetTenantId: tenant.id,
+      module: AUDIT_MODULES.TENANT,
+      eventType: 'TENANT_INVITATION_RESENT',
+      action: 'RESEND_INVITATION',
+      status: AUDIT_STATUS.SUCCESS,
+      resourceType: 'TENANT',
+      resourceId: tenant.id,
+      metadata: {
+        tenantSlug: tenant.slug,
+        previousInvitationId: previousInvitation.id,
+        newInvitationId: createdInvitation.id,
+        nominatedPhone: previousInvitation.invitedPhone,
+        nominatedEmail: previousInvitation.invitedEmail,
+      },
+      ipAddress: ipAddress || null,
+      userAgent: userAgent || null,
+    });
+
+    return createdInvitation;
+  });
+
+  const appBaseUrl = env.APP_PUBLIC_URL || 'http://localhost:5173';
+  const activationUrl = `${appBaseUrl}/owner/activate#token=${rawToken}`;
+  const storeDisplayName = tenant.tradeName || tenant.legalName;
+
+  // Retrieve nominated ownerFullName from creation audit if present
+  const creationAudit = await prisma.auditLog.findFirst({
+    where: {
+      targetTenantId: tenant.id,
+      eventType: 'TENANT_CREATED',
+    },
+    select: { metadata: true },
+  });
+  const ownerFullName = creationAudit?.metadata?.ownerFullName || storeDisplayName;
+
+  const invitationMessage = generateInvitationMessage({
+    ownerName: ownerFullName,
+    storeName: storeDisplayName,
+    invitationLink: activationUrl,
+    expiryHours: 12,
+  });
+
+  const whatsappUrl = generateWhatsAppLink({
+    phone: normalizeWhatsAppPhone(newInvitation.invitedPhone),
+    message: invitationMessage,
+  });
+
+  return {
+    tenant: {
+      id: tenant.id,
+      slug: tenant.slug,
+      legalName: tenant.legalName,
+      tradeName: tenant.tradeName,
+      status: tenant.status,
+      createdAt: tenant.createdAt,
+      updatedAt: tenant.updatedAt,
+    },
+    invitation: {
+      id: newInvitation.id,
+      status: 'INVITED_PENDING_ACCEPTANCE',
+      nominatedPhone: newInvitation.invitedPhone,
+      nominatedEmail: newInvitation.invitedEmail,
+      activationUrl,
+      whatsappUrl,
+      rawToken,
+      expiresAt: newInvitation.expiresAt,
+      createdAt: newInvitation.createdAt,
+    },
+  };
+}
+
+/**
  * Retrieves a paginated list of Tenants with deterministic sorting and secret-free serializers.
  *
  * Enforces:
@@ -263,7 +431,9 @@ export async function listTenants({ page = 1, limit = 20, search, status } = {})
   }
 
   if (search && typeof search === 'string' && search.trim().length > 0) {
-    const sanitizedSearch = search.trim().replace(/[%_]/g, '\\$&');
+    const rawSearch = search.trim();
+    const sanitizedSearch = rawSearch.replace(/[%_]/g, '\\$&');
+    const searchPhoneNorm = normalizePhone(rawSearch);
     where.OR = [
       { legalName: { contains: sanitizedSearch, mode: 'insensitive' } },
       { tradeName: { contains: sanitizedSearch, mode: 'insensitive' } },
@@ -271,7 +441,10 @@ export async function listTenants({ page = 1, limit = 20, search, status } = {})
       {
         invitations: {
           some: {
-            invitedPhone: { contains: sanitizedSearch, mode: 'insensitive' },
+            OR: [
+              { invitedPhone: { contains: sanitizedSearch, mode: 'insensitive' } },
+              ...(searchPhoneNorm ? [{ invitedPhone: { contains: searchPhoneNorm } }] : []),
+            ],
           },
         },
       },
@@ -427,4 +600,197 @@ export async function getTenantById(tenantId) {
         }
       : null,
   };
+}
+
+/**
+ * Suspends an active tenant, revoking all active sessions for that tenant.
+ *
+ * Enforces:
+ * - 404 response on unknown tenant ID.
+ * - 400 INVALID_STATE_TRANSITION if tenant is already SUSPENDED.
+ * - 400 INVALID_STATE_TRANSITION if tenant is not ACTIVE (e.g. INVITED).
+ * - Atomic transaction: updates status, revokes active tenant sessions, records AuditLog.
+ * - Multi-tenant isolation: does not revoke sessions of other tenants.
+ *
+ * @param {Object} params
+ * @param {string} params.tenantId - UUID of the tenant to suspend
+ * @param {string} [params.reason] - Optional reason for suspension
+ * @param {string} params.actorUserId - ID of the acting Superadmin
+ * @param {string} [params.ipAddress] - Request IP address
+ * @param {string} [params.userAgent] - Request User-Agent header
+ * @returns {Promise<Object>} Sanitized updated tenant details
+ */
+export async function suspendTenant({ tenantId, reason, actorUserId, ipAddress, userAgent }) {
+  return await prisma.$transaction(async (tx) => {
+    // 0. Transaction-level authorization guard for privileged mutation
+    await assertPrivilegedMutationAuthorized(tx, actorUserId);
+
+    const tenant = await tx.tenant.findUnique({
+      where: { id: tenantId },
+    });
+
+    if (!tenant) {
+      const err = new Error('Tenant not found');
+      err.statusCode = 404;
+      err.code = 'TENANT_NOT_FOUND';
+      throw err;
+    }
+
+    if (tenant.status === 'SUSPENDED') {
+      const err = new Error('Tenant is already suspended');
+      err.statusCode = 400;
+      err.code = 'INVALID_STATE_TRANSITION';
+      throw err;
+    }
+
+    if (tenant.status !== 'ACTIVE') {
+      const err = new Error('Cannot suspend a tenant that has not completed activation');
+      err.statusCode = 400;
+      err.code = 'INVALID_STATE_TRANSITION';
+      throw err;
+    }
+
+    const updatedTenant = await tx.tenant.update({
+      where: { id: tenantId },
+      data: { status: 'SUSPENDED' },
+    });
+
+    // Revoke all active sessions for this suspended tenant
+    const revokedSessions = await tx.session.updateMany({
+      where: {
+        activeTenantId: tenantId,
+        revokedAt: null,
+      },
+      data: {
+        revokedAt: new Date(),
+      },
+    });
+
+    // Record AuditLog
+    await recordAuditEvent({
+      tx,
+      actorUserId: actorUserId || null,
+      actorRole: 'SUPERADMIN',
+      targetTenantId: tenant.id,
+      module: AUDIT_MODULES.TENANT,
+      eventType: 'TENANT_LIFECYCLE',
+      action: 'TENANT_SUSPENDED',
+      status: AUDIT_STATUS.SUCCESS,
+      resourceType: 'TENANT',
+      resourceId: tenant.id,
+      metadata: {
+        previousStatus: tenant.status,
+        newStatus: 'SUSPENDED',
+        reason: reason || null,
+        revokedSessionCount: revokedSessions.count,
+        diff: {
+          before: { status: tenant.status },
+          after: { status: 'SUSPENDED' },
+        },
+      },
+      ipAddress: ipAddress || null,
+      userAgent: userAgent || null,
+    });
+
+    return {
+      id: updatedTenant.id,
+      slug: updatedTenant.slug,
+      legalName: updatedTenant.legalName,
+      tradeName: updatedTenant.tradeName,
+      status: updatedTenant.status,
+      createdAt: updatedTenant.createdAt,
+      updatedAt: updatedTenant.updatedAt,
+      revokedSessionCount: revokedSessions.count,
+    };
+  });
+}
+
+/**
+ * Reactivates a suspended tenant.
+ *
+ * Enforces:
+ * - 404 response on unknown tenant ID.
+ * - 400 INVALID_STATE_TRANSITION if tenant is already ACTIVE.
+ * - 400 INVALID_STATE_TRANSITION if tenant is not SUSPENDED (e.g. INVITED).
+ * - Atomic transaction: updates status, records AuditLog.
+ * - Previously revoked sessions remain revoked (Owner must re-authenticate).
+ *
+ * @param {Object} params
+ * @param {string} params.tenantId - UUID of the tenant to reactivate
+ * @param {string} [params.reason] - Optional reason for reactivation
+ * @param {string} params.actorUserId - ID of the acting Superadmin
+ * @param {string} [params.ipAddress] - Request IP address
+ * @param {string} [params.userAgent] - Request User-Agent header
+ * @returns {Promise<Object>} Sanitized updated tenant details
+ */
+export async function reactivateTenant({ tenantId, reason, actorUserId, ipAddress, userAgent }) {
+  return await prisma.$transaction(async (tx) => {
+    // 0. Transaction-level authorization guard for privileged mutation
+    await assertPrivilegedMutationAuthorized(tx, actorUserId);
+
+    const tenant = await tx.tenant.findUnique({
+      where: { id: tenantId },
+    });
+
+    if (!tenant) {
+      const err = new Error('Tenant not found');
+      err.statusCode = 404;
+      err.code = 'TENANT_NOT_FOUND';
+      throw err;
+    }
+
+    if (tenant.status === 'ACTIVE') {
+      const err = new Error('Tenant is already active');
+      err.statusCode = 400;
+      err.code = 'INVALID_STATE_TRANSITION';
+      throw err;
+    }
+
+    if (tenant.status !== 'SUSPENDED') {
+      const err = new Error('Cannot reactivate a tenant that has never been activated');
+      err.statusCode = 400;
+      err.code = 'INVALID_STATE_TRANSITION';
+      throw err;
+    }
+
+    const updatedTenant = await tx.tenant.update({
+      where: { id: tenantId },
+      data: { status: 'ACTIVE' },
+    });
+
+    // Record AuditLog
+    await recordAuditEvent({
+      tx,
+      actorUserId: actorUserId || null,
+      actorRole: 'SUPERADMIN',
+      targetTenantId: tenant.id,
+      module: AUDIT_MODULES.TENANT,
+      eventType: 'TENANT_LIFECYCLE',
+      action: 'TENANT_REACTIVATED',
+      status: AUDIT_STATUS.SUCCESS,
+      resourceType: 'TENANT',
+      resourceId: tenant.id,
+      metadata: {
+        previousStatus: tenant.status,
+        newStatus: 'ACTIVE',
+        reason: reason || null,
+        diff: {
+          before: { status: tenant.status },
+          after: { status: 'ACTIVE' },
+        },
+      },
+      ipAddress: ipAddress || null,
+      userAgent: userAgent || null,
+    });
+
+    return {
+      id: updatedTenant.id,
+      slug: updatedTenant.slug,
+      legalName: updatedTenant.legalName,
+      tradeName: updatedTenant.tradeName,
+      status: updatedTenant.status,
+      createdAt: updatedTenant.createdAt,
+      updatedAt: updatedTenant.updatedAt,
+    };
+  });
 }

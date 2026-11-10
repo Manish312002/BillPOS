@@ -8,6 +8,7 @@
     ".": "./src/index.js",
     "./constants": "./src/constants/index.js",
     "./contracts": "./src/contracts/index.js",
+    "./dto": "./src/dto/index.js",
     "./utils": "./src/utils/index.js"
   },
   "scripts": {

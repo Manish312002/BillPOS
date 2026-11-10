@@ -5,6 +5,7 @@ import { app } from '../src/app.js';
 import { prisma } from '../src/db/client.js';
 import { hashPassword, hashToken, generateOpaqueToken } from '../src/utils/security.js';
 import { createTenant } from '../src/services/tenant.service.js';
+import { withTestAuditCleanup } from './helpers/testAuditCleanup.js';
 
 describe('Tenant Creation, Listing & Detail API (ADR-002 / WP-02.04D)', () => {
   const testId = Date.now();
@@ -64,6 +65,13 @@ describe('Tenant Creation, Listing & Detail API (ADR-002 / WP-02.04D)', () => {
             status: 'ACTIVE',
           },
         },
+        totp: {
+          create: {
+            secretEncrypted: 'mock_encrypted_secret',
+            isEnabled: true,
+            recoveryCodesAcknowledgedAt: new Date(),
+          },
+        },
       },
     });
     createdUserIds.push(superadminUser.id);
@@ -84,6 +92,13 @@ describe('Tenant Creation, Listing & Detail API (ADR-002 / WP-02.04D)', () => {
             status: 'ACTIVE',
           },
         },
+        totp: {
+          create: {
+            secretEncrypted: 'mock_encrypted_secret',
+            isEnabled: true,
+            recoveryCodesAcknowledgedAt: new Date(),
+          },
+        },
       },
     });
     createdUserIds.push(pending2faUser.id);
@@ -102,6 +117,13 @@ describe('Tenant Creation, Listing & Detail API (ADR-002 / WP-02.04D)', () => {
           create: {
             role: 'SUPERADMIN',
             status: 'ACTIVE',
+          },
+        },
+        totp: {
+          create: {
+            secretEncrypted: 'mock_encrypted_secret',
+            isEnabled: true,
+            recoveryCodesAcknowledgedAt: new Date(),
           },
         },
       },
@@ -125,22 +147,26 @@ describe('Tenant Creation, Listing & Detail API (ADR-002 / WP-02.04D)', () => {
   });
 
   afterAll(async () => {
-    // Clean up created test tenants (cascades to invitations & onboarding)
-    for (const tenantId of createdTenantIds) {
-      try {
-        await prisma.tenant.delete({ where: { id: tenantId } });
-      } catch {
-        // Ignored
+    await withTestAuditCleanup(async () => {
+      // Clean up created test tenants (cascades to invitations & onboarding)
+      for (const tenantId of createdTenantIds) {
+        try {
+          await prisma.auditLog.deleteMany({ where: { targetTenantId: tenantId } });
+          await prisma.tenant.delete({ where: { id: tenantId } });
+        } catch {
+          // Ignored
+        }
       }
-    }
-    // Clean up created test users (cascades to sessions)
-    for (const userId of createdUserIds) {
-      try {
-        await prisma.user.delete({ where: { id: userId } });
-      } catch {
-        // Ignored
+      // Clean up created test users (cascades to sessions)
+      for (const userId of createdUserIds) {
+        try {
+          await prisma.auditLog.deleteMany({ where: { actorUserId: userId } });
+          await prisma.user.delete({ where: { id: userId } });
+        } catch {
+          // Ignored
+        }
       }
-    }
+    });
   });
 
   describe('1. Security & Middleware Pipeline Enforcement (POST /tenants)', () => {
@@ -547,8 +573,8 @@ describe('Tenant Creation, Listing & Detail API (ADR-002 / WP-02.04D)', () => {
       }
 
       expect(thrownError).not.toBeNull();
-      // Prisma throws P2003 for foreign key constraint violation
-      expect(thrownError.code).toBe('P2003');
+      // Transaction-level authorization rejects non-existent actor with PRIVILEGED_AUTH_USER_NOT_FOUND
+      expect(['P2003', 'PRIVILEGED_AUTH_USER_NOT_FOUND']).toContain(thrownError.code);
 
       // Verify that earlier writes (Tenant, OnboardingProgress) were completely rolled back
       const tenant = await prisma.tenant.findUnique({
@@ -1008,6 +1034,277 @@ describe('Tenant Creation, Listing & Detail API (ADR-002 / WP-02.04D)', () => {
         expect(detailJson).not.toContain('passwordHash');
         expect(detailJson).not.toContain('secretEncrypted');
       }
+    });
+  });
+
+  describe('7. Superadmin Tenant Suspension & Reactivation (ADR-003 / WP-02)', () => {
+    let lifecycleTenant = null;
+    let unaffectedTenant = null;
+    let testTenantSessionId = null;
+    let unaffectedTenantSessionId = null;
+
+    beforeAll(async () => {
+      // 1. Create a target tenant for suspension/reactivation lifecycle testing
+      lifecycleTenant = await prisma.tenant.create({
+        data: {
+          slug: `lifecycle-${testId}-${Date.now()}`,
+          legalName: 'Lifecycle Test Tenant Ltd',
+          tradeName: 'Lifecycle Mart',
+          status: 'INVITED',
+        },
+      });
+      createdTenantIds.push(lifecycleTenant.id);
+
+      // 2. Create an unaffected tenant to verify multi-tenant isolation
+      unaffectedTenant = await prisma.tenant.create({
+        data: {
+          slug: `unaffected-${testId}-${Date.now()}`,
+          legalName: 'Unaffected Store Ltd',
+          tradeName: 'Unaffected Mart',
+          status: 'ACTIVE',
+        },
+      });
+      createdTenantIds.push(unaffectedTenant.id);
+
+      // 3. Create active sessions for both tenants
+      const session1 = await prisma.session.create({
+        data: {
+          userId: regularUser.id,
+          activeTenantId: lifecycleTenant.id,
+          sessionTokenHash: hashToken(generateOpaqueToken(32)),
+          sessionType: 'TENANT',
+          isSecondFactorPending: false,
+          idleExpiresAt: new Date(Date.now() + 30 * 60 * 1000),
+          absoluteExpiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000),
+          lastActivityAt: new Date(),
+        },
+      });
+      testTenantSessionId = session1.id;
+
+      const session2 = await prisma.session.create({
+        data: {
+          userId: regularUser.id,
+          activeTenantId: unaffectedTenant.id,
+          sessionTokenHash: hashToken(generateOpaqueToken(32)),
+          sessionType: 'TENANT',
+          isSecondFactorPending: false,
+          idleExpiresAt: new Date(Date.now() + 30 * 60 * 1000),
+          absoluteExpiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000),
+          lastActivityAt: new Date(),
+        },
+      });
+      unaffectedTenantSessionId = session2.id;
+    });
+
+    it('rejects unauthenticated suspension request with 401 UNAUTHORIZED', async () => {
+      const res = await request(app)
+        .post(`/api/platform/tenants/${lifecycleTenant.id}/suspend`)
+        .set('Origin', 'http://localhost:5173')
+        .send({});
+
+      expect(res.status).toBe(401);
+      expect(res.body.code).toBe('UNAUTHORIZED');
+    });
+
+    it('rejects non-superadmin suspension request with 403 FORBIDDEN', async () => {
+      const res = await request(app)
+        .post(`/api/platform/tenants/${lifecycleTenant.id}/suspend`)
+        .set('Cookie', `bb_session=${regularUserToken}`)
+        .set('Origin', 'http://localhost:5173')
+        .send({});
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('FORBIDDEN');
+    });
+
+    it('rejects superadmin with pending 2FA with 403 SECOND_FACTOR_REQUIRED', async () => {
+      const res = await request(app)
+        .post(`/api/platform/tenants/${lifecycleTenant.id}/suspend`)
+        .set('Cookie', `bb_session=${pending2faToken}`)
+        .set('Origin', 'http://localhost:5173')
+        .send({});
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('SECOND_FACTOR_REQUIRED');
+    });
+
+    it('rejects invalid UUID format with 400', async () => {
+      const res = await request(app)
+        .post('/api/platform/tenants/not-a-valid-uuid/suspend')
+        .set('Cookie', `bb_session=${superadminToken}`)
+        .set('Origin', 'http://localhost:5173')
+        .send({});
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('rejects reason exceeding 500 characters with 400', async () => {
+      const res = await request(app)
+        .post(`/api/platform/tenants/${lifecycleTenant.id}/suspend`)
+        .set('Cookie', `bb_session=${superadminToken}`)
+        .set('Origin', 'http://localhost:5173')
+        .send({ reason: 'x'.repeat(501) });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 404 TENANT_NOT_FOUND when suspending a non-existent tenant', async () => {
+      const res = await request(app)
+        .post(`/api/platform/tenants/${crypto.randomUUID()}/suspend`)
+        .set('Cookie', `bb_session=${superadminToken}`)
+        .set('Origin', 'http://localhost:5173')
+        .send({});
+
+      expect(res.status).toBe(404);
+      expect(res.body.code).toBe('TENANT_NOT_FOUND');
+    });
+
+    it('rejects suspending an INVITED tenant with 400 INVALID_STATE_TRANSITION', async () => {
+      const res = await request(app)
+        .post(`/api/platform/tenants/${lifecycleTenant.id}/suspend`)
+        .set('Cookie', `bb_session=${superadminToken}`)
+        .set('Origin', 'http://localhost:5173')
+        .send({});
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('INVALID_STATE_TRANSITION');
+      expect(res.body.message).toContain('Cannot suspend a tenant that has not completed activation');
+    });
+
+    it('rejects reactivating an INVITED tenant with 400 INVALID_STATE_TRANSITION', async () => {
+      const res = await request(app)
+        .post(`/api/platform/tenants/${lifecycleTenant.id}/reactivate`)
+        .set('Cookie', `bb_session=${superadminToken}`)
+        .set('Origin', 'http://localhost:5173')
+        .send({});
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('INVALID_STATE_TRANSITION');
+      expect(res.body.message).toContain('Cannot reactivate a tenant that has never been activated');
+    });
+
+    it('suspends an ACTIVE tenant, revokes its active sessions, and logs audit record', async () => {
+      // Transition tenant to ACTIVE first
+      await prisma.tenant.update({
+        where: { id: lifecycleTenant.id },
+        data: { status: 'ACTIVE' },
+      });
+
+      const res = await request(app)
+        .post(`/api/platform/tenants/${lifecycleTenant.id}/suspend`)
+        .set('Cookie', `bb_session=${superadminToken}`)
+        .set('Origin', 'http://localhost:5173')
+        .send({ reason: 'Compliance review in progress' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toBe('Tenant suspended successfully');
+      expect(res.body.data.status).toBe('SUSPENDED');
+      expect(res.body.data.revokedSessionCount).toBe(1);
+
+      // Verify tenant status in database
+      const dbTenant = await prisma.tenant.findUnique({
+        where: { id: lifecycleTenant.id },
+      });
+      expect(dbTenant.status).toBe('SUSPENDED');
+
+      // Verify target tenant session was revoked
+      const revokedSession = await prisma.session.findUnique({
+        where: { id: testTenantSessionId },
+      });
+      expect(revokedSession.revokedAt).not.toBeNull();
+
+      // Verify unaffected tenant session remains active (multi-tenant isolation)
+      const unaffectedSession = await prisma.session.findUnique({
+        where: { id: unaffectedTenantSessionId },
+      });
+      expect(unaffectedSession.revokedAt).toBeNull();
+
+      // Verify AuditLog entry
+      const auditLog = await prisma.auditLog.findFirst({
+        where: {
+          targetTenantId: lifecycleTenant.id,
+          action: 'TENANT_SUSPENDED',
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(auditLog).not.toBeNull();
+      expect(auditLog.eventType).toBe('TENANT_LIFECYCLE');
+      expect(auditLog.actorUserId).toBe(superadminUser.id);
+      expect(auditLog.metadata).toMatchObject({
+        previousStatus: 'ACTIVE',
+        newStatus: 'SUSPENDED',
+        reason: 'Compliance review in progress',
+        revokedSessionCount: 1,
+      });
+    });
+
+    it('rejects suspending an already SUSPENDED tenant with 400 INVALID_STATE_TRANSITION', async () => {
+      const res = await request(app)
+        .post(`/api/platform/tenants/${lifecycleTenant.id}/suspend`)
+        .set('Cookie', `bb_session=${superadminToken}`)
+        .set('Origin', 'http://localhost:5173')
+        .send({});
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('INVALID_STATE_TRANSITION');
+      expect(res.body.message).toContain('Tenant is already suspended');
+    });
+
+    it('reactivates a SUSPENDED tenant without restoring revoked sessions and logs audit record', async () => {
+      const res = await request(app)
+        .post(`/api/platform/tenants/${lifecycleTenant.id}/reactivate`)
+        .set('Cookie', `bb_session=${superadminToken}`)
+        .set('Origin', 'http://localhost:5173')
+        .send({ reason: 'Compliance review cleared' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toBe('Tenant reactivated successfully');
+      expect(res.body.data.status).toBe('ACTIVE');
+
+      // Verify tenant status in database
+      const dbTenant = await prisma.tenant.findUnique({
+        where: { id: lifecycleTenant.id },
+      });
+      expect(dbTenant.status).toBe('ACTIVE');
+
+      // Verify previously revoked session remains revoked
+      const sessionAfterReactivation = await prisma.session.findUnique({
+        where: { id: testTenantSessionId },
+      });
+      expect(sessionAfterReactivation.revokedAt).not.toBeNull();
+
+      // Verify AuditLog entry
+      const auditLog = await prisma.auditLog.findFirst({
+        where: {
+          targetTenantId: lifecycleTenant.id,
+          action: 'TENANT_REACTIVATED',
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(auditLog).not.toBeNull();
+      expect(auditLog.eventType).toBe('TENANT_LIFECYCLE');
+      expect(auditLog.actorUserId).toBe(superadminUser.id);
+      expect(auditLog.metadata).toMatchObject({
+        previousStatus: 'SUSPENDED',
+        newStatus: 'ACTIVE',
+        reason: 'Compliance review cleared',
+      });
+    });
+
+    it('rejects reactivating an already ACTIVE tenant with 400 INVALID_STATE_TRANSITION', async () => {
+      const res = await request(app)
+        .post(`/api/platform/tenants/${lifecycleTenant.id}/reactivate`)
+        .set('Cookie', `bb_session=${superadminToken}`)
+        .set('Origin', 'http://localhost:5173')
+        .send({});
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('INVALID_STATE_TRANSITION');
+      expect(res.body.message).toContain('Tenant is already active');
     });
   });
 });

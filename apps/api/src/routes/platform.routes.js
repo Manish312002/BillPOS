@@ -1,6 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { createTenantSchema } from '@billingbuddy/shared';
+import {
+  createTenantSchema,
+  tenantIdParamSchema,
+  suspendTenantSchema,
+  reactivateTenantSchema,
+} from '@billingbuddy/shared';
 import * as tenantService from '../services/tenant.service.js';
 import {
   authenticate,
@@ -40,10 +45,6 @@ const listTenantsQuerySchema = z.object({
       errorMap: () => ({ message: 'Status must be one of: INVITED, ACTIVE, SUSPENDED' }),
     })
     .optional(),
-});
-
-const tenantIdParamSchema = z.object({
-  tenantId: z.string().uuid({ message: 'Invalid tenant UUID format' }),
 });
 
 /**
@@ -138,6 +139,97 @@ router.post('/tenants', csrfProtection, async (req, res, next) => {
       .json(
         successResponse(result, 'Tenant created and Store Owner invitation generated successfully')
       );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/platform/tenants/:tenantId/invitations/resend
+ *
+ * Reissues a Store Owner invitation for an existing tenant, invalidating/superseding
+ * any prior pending invitations, and returns fresh ephemeral activation & WhatsApp links.
+ */
+router.post('/tenants/:tenantId/invitations/resend', csrfProtection, async (req, res, next) => {
+  try {
+    const validated = tenantIdParamSchema.parse(req.params);
+
+    const result = await tenantService.resendInvitation({
+      tenantId: validated.tenantId,
+      actorUserId: req.user.id,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+      Pragma: 'no-cache',
+      'Referrer-Policy': 'no-referrer',
+    });
+
+    return res
+      .status(200)
+      .json(successResponse(result, 'Store Owner invitation reissued successfully'));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/platform/tenants/:tenantId/suspend
+ *
+ * Suspends an active tenant, immediately revoking active tenant sessions.
+ */
+router.post('/tenants/:tenantId/suspend', csrfProtection, async (req, res, next) => {
+  try {
+    const params = tenantIdParamSchema.parse(req.params);
+    const body = suspendTenantSchema.parse(req.body || {});
+
+    const result = await tenantService.suspendTenant({
+      tenantId: params.tenantId,
+      reason: body.reason,
+      actorUserId: req.user.id,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+      Pragma: 'no-cache',
+      'Referrer-Policy': 'no-referrer',
+    });
+
+    return res.status(200).json(successResponse(result, 'Tenant suspended successfully'));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/platform/tenants/:tenantId/reactivate
+ *
+ * Reactivates a suspended tenant.
+ */
+router.post('/tenants/:tenantId/reactivate', csrfProtection, async (req, res, next) => {
+  try {
+    const params = tenantIdParamSchema.parse(req.params);
+    const body = reactivateTenantSchema.parse(req.body || {});
+
+    const result = await tenantService.reactivateTenant({
+      tenantId: params.tenantId,
+      reason: body.reason,
+      actorUserId: req.user.id,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+      Pragma: 'no-cache',
+      'Referrer-Policy': 'no-referrer',
+    });
+
+    return res.status(200).json(successResponse(result, 'Tenant reactivated successfully'));
   } catch (err) {
     next(err);
   }

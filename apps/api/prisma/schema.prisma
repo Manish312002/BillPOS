@@ -53,6 +53,8 @@ model User {
   otpChallenges         OTPChallenge[]
   createdInvitations    OwnerInvitation[]     @relation("CreatedInvitations")
   auditLogs             AuditLog[]
+  grantedOverrides      TenantEntitlementOverride[] @relation("GrantedOverrides")
+  verifiedPayments      SubscriptionPayment[]       @relation("VerifiedPayments")
 
   @@index([phone])
   @@index([email])
@@ -127,9 +129,14 @@ model Tenant {
   onboardingProgress OnboardingProgress?
   auditLogs          AuditLog[]
   sessions           Session[]
+  subscriptions      TenantSubscription[]
+  invoices           SubscriptionInvoice[]
+  payments           SubscriptionPayment[]
+  overrides          TenantEntitlementOverride[]
+  usageRecords       UsageRecord[]
 
-  @@index([slug])
-  @@index([status])
+  @@index([status, createdAt])
+  @@index([createdAt])
 }
 
 // Association between User and Tenant with tenant-specific roles
@@ -284,25 +291,34 @@ model OnboardingProgress {
 
 // Immutable, append-only security and operational audit trail
 model AuditLog {
-  id             String    @id @default(uuid())
-  actorUserId    String?
-  actorUser      User?     @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
-  targetTenantId String?
-  targetTenant   Tenant?   @relation(fields: [targetTenantId], references: [id], onDelete: SetNull)
-  eventType      String
-  action         String
-  resourceType   String?
-  resourceId     String?
-  metadata       Json?
-  ipAddress      String?
-  userAgent      String?
-  createdAt      DateTime  @default(now())
+  id               String    @id @default(uuid())
+  actorUserId      String?
+  actorUser        User?     @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+  actorRole        String?
+  targetTenantId   String?
+  targetTenant     Tenant?   @relation(fields: [targetTenantId], references: [id], onDelete: Restrict)
+  module           String?
+  eventType        String
+  action           String
+  status           String    @default("SUCCESS")
+  resourceType     String?
+  resourceId       String?
+  metadata         Json?
+  supportSessionId String?
+  requestId        String?
+  ipAddress        String?
+  userAgent        String?
+  createdAt        DateTime  @default(now())
 
   @@index([actorUserId])
   @@index([targetTenantId])
   @@index([action])
   @@index([eventType])
   @@index([createdAt])
+  @@index([module])
+  @@index([status])
+  @@index([requestId])
+  @@index([supportSessionId])
 }
 
 // ==========================================
@@ -330,4 +346,231 @@ model NotificationEvent {
   @@index([deliveryStatus])
   @@index([recipient])
   @@index([createdAt])
+}
+
+// ==========================================
+// 9. Subscription & Entitlements (WP-SUB-02)
+// ==========================================
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  GRACE_PERIOD
+  READ_ONLY
+  SUSPENDED
+  CANCELED
+  EXPIRED
+}
+
+enum BillingCycle {
+  MONTHLY
+  ANNUAL
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+  VOID
+  UNCOLLECTIBLE
+}
+
+enum PaymentStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  UPI
+  BANK_TRANSFER
+  CASH
+  MANUAL_OVERRIDE
+}
+
+enum FeatureValueType {
+  BOOLEAN
+  NUMERIC
+}
+
+model Plan {
+  id              String         @id @default(uuid())
+  code            String         @unique
+  name            String
+  description     String?
+  isActive        Boolean        @default(true)
+  isPublic        Boolean        @default(true)
+  trialDays       Int            @default(0)
+  version         Int            @default(1)
+  sortOrder       Int            @default(0)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  prices          PlanPrice[]
+  features        PlanFeature[]
+  subscriptions   TenantSubscription[]
+
+  @@index([isActive, sortOrder])
+}
+
+model PlanPrice {
+  id              String         @id @default(uuid())
+  planId          String
+  plan            Plan           @relation(fields: [planId], references: [id], onDelete: Restrict)
+  billingCycle    BillingCycle
+  currency        String         @default("INR")
+  amountPaise     BigInt
+  isActive        Boolean        @default(true)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  subscriptions   TenantSubscription[]
+  invoices        SubscriptionInvoice[]
+
+  // Note: PostgreSQL Partial Unique Index enforced in migration SQL:
+  // CREATE UNIQUE INDEX "idx_plan_prices_single_active" 
+  // ON "PlanPrice" ("planId", "billingCycle") 
+  // WHERE "isActive" = true;
+  @@index([planId, billingCycle, isActive])
+  @@index([planId, billingCycle])
+}
+
+model PlanFeature {
+  id              String            @id @default(uuid())
+  planId          String
+  plan            Plan              @relation(fields: [planId], references: [id], onDelete: Cascade)
+  featureKey      String
+  valueType       FeatureValueType  @default(NUMERIC)
+  booleanValue    Boolean?
+  numericValue    Int?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([planId, featureKey])
+  @@index([planId])
+}
+
+model TenantSubscription {
+  id                 String             @id @default(uuid())
+  tenantId           String
+  tenant             Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  planId             String
+  plan               Plan               @relation(fields: [planId], references: [id], onDelete: Restrict)
+  planPriceId        String?
+  planPrice          PlanPrice?         @relation(fields: [planPriceId], references: [id], onDelete: Restrict)
+  status             SubscriptionStatus @default(TRIAL)
+  billingCycle       BillingCycle       @default(MONTHLY)
+  
+  trialEndsAt        DateTime?
+  currentPeriodStart DateTime           @default(now())
+  currentPeriodEnd   DateTime
+  gracePeriodEndsAt  DateTime?
+  canceledAt         DateTime?
+  cancelAtPeriodEnd  Boolean            @default(false)
+  cancellationReason String?
+  
+  leaseVersion       Int                @default(1)
+  
+  metadata           Json?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  invoices           SubscriptionInvoice[]
+  overrides          TenantEntitlementOverride[]
+
+  @@index([tenantId, status])
+  @@index([status, currentPeriodEnd])
+  @@index([planId])
+}
+
+model TenantEntitlementOverride {
+  id                 String             @id @default(uuid())
+  tenantId           String
+  tenant             Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscriptionId     String
+  subscription       TenantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  featureKey         String
+  valueType          FeatureValueType   @default(NUMERIC)
+  booleanValue       Boolean?
+  numericValue       Int?
+  reason             String
+  grantedById        String
+  grantedBy          User               @relation("GrantedOverrides", fields: [grantedById], references: [id], onDelete: Restrict)
+  expiresAt          DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@unique([tenantId, featureKey])
+  @@index([tenantId, featureKey])
+}
+
+model SubscriptionInvoice {
+  id                 String             @id @default(uuid())
+  invoiceNumber      String             @unique
+  tenantId           String
+  tenant             Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  subscriptionId     String
+  subscription       TenantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+  planPriceId        String?
+  planPrice          PlanPrice?         @relation(fields: [planPriceId], references: [id], onDelete: SetNull)
+  
+  subtotalPaise      BigInt
+  taxPaise           BigInt             @default(0)
+  totalPaise         BigInt
+  paidPaise          BigInt             @default(0)
+  currency           String             @default("INR")
+  
+  status             InvoiceStatus      @default(ISSUED)
+  dueDate            DateTime
+  paidAt             DateTime?
+  periodStart        DateTime
+  periodEnd          DateTime
+  
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  payments           SubscriptionPayment[]
+
+  @@index([tenantId, status])
+  @@index([dueDate, status])
+}
+
+model SubscriptionPayment {
+  id                 String              @id @default(uuid())
+  tenantId           String
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  invoiceId          String
+  invoice            SubscriptionInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  
+  amountPaise        BigInt
+  method             PaymentMethod       @default(UPI)
+  referenceNumber    String              @unique
+  proofDocumentUrl   String?
+  notes              String?
+  
+  status             PaymentStatus       @default(PENDING)
+  verifiedById       String?
+  verifiedBy         User?               @relation("VerifiedPayments", fields: [verifiedById], references: [id], onDelete: Restrict)
+  verifiedAt         DateTime?
+  rejectionReason    String?
+  
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@index([tenantId, status])
+  @@index([referenceNumber])
+  @@index([status, createdAt])
+}
+
+model UsageRecord {
+  id                 String             @id @default(uuid())
+  tenantId           String
+  tenant             Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  metric             String
+  recordedCount      Int
+  limitSnapshot      Int
+  recordedAt         DateTime           @default(now())
+
+  @@index([tenantId, metric, recordedAt])
 }

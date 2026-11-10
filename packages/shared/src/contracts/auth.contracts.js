@@ -98,10 +98,48 @@ export const createTenantSchema = z.object({
 });
 
 /**
+ * Tenant ID parameter schema
+ */
+export const tenantIdParamSchema = z.object({
+  tenantId: z.string().uuid({ message: 'Invalid tenant UUID format' }),
+});
+
+/**
+ * Superadmin suspend tenant schema
+ */
+export const suspendTenantSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .max(500, { message: 'Reason cannot exceed 500 characters' })
+    .optional()
+    .nullable(),
+});
+
+/**
+ * Superadmin reactivate tenant schema
+ */
+export const reactivateTenantSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .max(500, { message: 'Reason cannot exceed 500 characters' })
+    .optional()
+    .nullable(),
+});
+
+/**
  * Resend Owner invitation schema
  */
 export const resendInvitationSchema = z.object({
   invitationId: z.string().uuid({ message: 'Valid invitation UUID is required' }),
+});
+
+/**
+ * Store Owner invitation token validation schema
+ */
+export const validateInvitationSchema = z.object({
+  token: z.string().trim().min(16, { message: 'Valid invitation token is required' }),
 });
 
 /**

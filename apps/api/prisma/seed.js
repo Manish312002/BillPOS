@@ -1,6 +1,7 @@
 import bcrypt from 'bcrypt';
 import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
+import { seedSubscriptionPlans } from './seeds/subscriptionPlans.seed.js';
 
 dotenv.config();
 
@@ -190,6 +191,7 @@ export async function seedRootSuperadmin({
 async function main() {
   try {
     await seedRootSuperadmin();
+    await seedSubscriptionPlans(prisma);
   } catch (error) {
     console.error('[Seed Error]', error.message);
     process.exit(1);

@@ -4,6 +4,7 @@ import { app } from '../src/app.js';
 import { prisma } from '../src/db/client.js';
 import { hashPassword, hashToken } from '../src/utils/security.js';
 import { computeTotpCode, decryptTotpSecret } from '../src/utils/totp.js';
+import { withTestAuditCleanup } from './helpers/testCleanup.js';
 
 describe('Superadmin Authentication, TOTP & Security Hardening (ADR-002 / WP-02.03D)', () => {
   const testId = Date.now();
@@ -60,17 +61,17 @@ describe('Superadmin Authentication, TOTP & Security Hardening (ADR-002 / WP-02.
   });
 
   afterAll(async () => {
-    // Cleanup test data
-    if (superadminUser) {
-      await prisma.userTotp.deleteMany({ where: { userId: superadminUser.id } });
-      await prisma.session.deleteMany({ where: { userId: superadminUser.id } });
-      await prisma.platformAuthorization.deleteMany({ where: { userId: superadminUser.id } });
-      await prisma.user.delete({ where: { id: superadminUser.id } }).catch(() => {});
-    }
-    if (nonAdminUser) {
-      await prisma.session.deleteMany({ where: { userId: nonAdminUser.id } });
-      await prisma.user.delete({ where: { id: nonAdminUser.id } }).catch(() => {});
-    }
+    await withTestAuditCleanup(async () => {
+      // Cleanup test data
+      const userIds = [superadminUser?.id, nonAdminUser?.id].filter(Boolean);
+      if (userIds.length > 0) {
+        await prisma.auditLog.deleteMany({ where: { actorUserId: { in: userIds } } });
+        await prisma.userTotp.deleteMany({ where: { userId: { in: userIds } } });
+        await prisma.session.deleteMany({ where: { userId: { in: userIds } } });
+        await prisma.platformAuthorization.deleteMany({ where: { userId: { in: userIds } } });
+        await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+      }
+    });
     await prisma.$disconnect();
   });
 

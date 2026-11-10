@@ -197,6 +197,67 @@ export const logoutUser = createAsyncThunk('auth/logoutUser', async () => {
   return null;
 });
 
+/**
+ * Validates a Store Owner invitation token (POST /api/auth/owner/invitation/validate)
+ */
+export const validateOwnerInvitation = createAsyncThunk(
+  'auth/validateOwnerInvitation',
+  async ({ token }, { rejectWithValue }) => {
+    try {
+      const response = await apiClient.post('/auth/owner/invitation/validate', { token });
+      return response.data?.data || response.data;
+    } catch (err) {
+      return rejectWithValue({
+        status: err.status || null,
+        code: err.code || 'VALIDATION_ERROR',
+        message: err.message || 'Invitation validation failed',
+      });
+    }
+  }
+);
+
+/**
+ * Activates a Store Owner account via invitation token and sets initial password (POST /api/auth/owner/activate)
+ */
+export const activateOwner = createAsyncThunk(
+  'auth/activateOwner',
+  async ({ token, password }, { rejectWithValue }) => {
+    try {
+      const response = await apiClient.post('/auth/owner/activate', { token, password });
+      return response.data?.data || response.data;
+    } catch (err) {
+      return rejectWithValue({
+        status: err.status || null,
+        code: err.code || 'ACTIVATION_ERROR',
+        message: err.message || 'Store activation failed',
+      });
+    }
+  }
+);
+
+/**
+ * Store Owner credential login (POST /api/auth/owner/login)
+ */
+export const loginOwner = createAsyncThunk(
+  'auth/loginOwner',
+  async ({ identifier, password, tenantSlug }, { rejectWithValue }) => {
+    try {
+      const response = await apiClient.post('/auth/owner/login', {
+        identifier,
+        password,
+        tenantSlug: tenantSlug || undefined,
+      });
+      return response.data?.data || response.data;
+    } catch (err) {
+      return rejectWithValue({
+        status: err.status || null,
+        code: err.code || 'OWNER_LOGIN_ERROR',
+        message: err.message || 'Login failed',
+      });
+    }
+  }
+);
+
 const initialState = {
   authState: AUTH_STATES.INITIALIZING,
   user: null,
@@ -379,12 +440,47 @@ export const authSlice = createSlice({
       .addCase(verifyRecoveryCode.fulfilled, handle2faSuccess);
 
     // changePassword
-    builder.addCase(changePassword.fulfilled, (state) => {
-      if (state.user) {
+    builder.addCase(changePassword.fulfilled, (state, action) => {
+      const payload = action.payload || {};
+      if (payload.user) {
+        state.user = {
+          ...state.user,
+          ...payload.user,
+          mustChangePassword: false,
+        };
+      } else if (state.user) {
         state.user.mustChangePassword = false;
       }
       state.error = null;
     });
+
+    // activateOwner
+    builder
+      .addCase(activateOwner.fulfilled, (state, action) => {
+        const payload = action.payload || {};
+        state.authState = AUTH_STATES.AUTHENTICATED_OWNER;
+        state.user = payload.user || null;
+        state.activeTenant = payload.activeTenant || null;
+        state.tenantMemberships = payload.membership ? [payload.membership] : [];
+        state.error = null;
+      })
+      .addCase(activateOwner.rejected, (state, action) => {
+        state.error = action.payload?.message || 'Store activation failed';
+      });
+
+    // loginOwner
+    builder
+      .addCase(loginOwner.fulfilled, (state, action) => {
+        const payload = action.payload || {};
+        state.authState = AUTH_STATES.AUTHENTICATED_OWNER;
+        state.user = payload.user || null;
+        state.activeTenant = payload.activeTenant || null;
+        state.tenantMemberships = payload.tenantMemberships || [];
+        state.error = null;
+      })
+      .addCase(loginOwner.rejected, (state, action) => {
+        state.error = action.payload?.message || 'Login failed';
+      });
 
     // logoutUser
     builder.addCase(logoutUser.fulfilled, (state) => {

@@ -1,6 +1,16 @@
 import { prisma } from '../db/client.js';
 import { hashToken } from '../utils/security.js';
 import { errorResponse } from '../utils/apiResponse.js';
+import {
+  recordAuditEvent,
+  recordSecurityRejectionAuditSafe,
+} from '../services/audit.service.js';
+import {
+  AUDIT_MODULES,
+  AUDIT_EVENT_TYPES,
+  AUDIT_ACTIONS,
+  AUDIT_STATUS,
+} from '@billingbuddy/shared';
 
 /**
  * Lightweight cookie parser for `bb_session` without adding third-party dependencies.
@@ -21,7 +31,13 @@ export function extractSessionToken(req) {
       const [name, ...valParts] = cookie.trim().split('=');
       if (name === 'bb_session') {
         const val = valParts.join('=').trim();
-        if (val) return decodeURIComponent(val);
+        if (val) {
+          try {
+            return decodeURIComponent(val);
+          } catch {
+            return val;
+          }
+        }
       }
     }
   }
@@ -49,11 +65,6 @@ export async function authenticate(req, res, next) {
         user: {
           include: {
             platformAuthorization: true,
-            tenantMemberships: {
-              include: {
-                tenant: true,
-              },
-            },
           },
         },
         activeTenant: true,
@@ -61,6 +72,19 @@ export async function authenticate(req, res, next) {
     });
 
     if (!session || session.revokedAt !== null) {
+      await recordSecurityRejectionAuditSafe({
+        action: AUDIT_ACTIONS.SESSION_VALIDATION_FAILED,
+        reason: session ? 'SESSION_REVOKED' : 'SESSION_NOT_FOUND',
+        resourceType: 'SESSION',
+        resourceId: session ? session.id : null,
+        actorUserId: null,
+        metadata: {
+          sessionUserId: session ? session.userId : null,
+        },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        req,
+      });
       return res
         .status(401)
         .json(errorResponse('Session is invalid or has been revoked', null, 'SESSION_INVALID'));
@@ -70,6 +94,19 @@ export async function authenticate(req, res, next) {
 
     // Check idle expiration
     if (session.idleExpiresAt < now) {
+      await recordSecurityRejectionAuditSafe({
+        action: AUDIT_ACTIONS.SESSION_EXPIRED,
+        reason: 'SESSION_IDLE_EXPIRED',
+        resourceType: 'SESSION',
+        resourceId: session.id,
+        actorUserId: null,
+        metadata: {
+          sessionUserId: session.userId,
+        },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        req,
+      });
       return res
         .status(401)
         .json(errorResponse('Session has expired due to inactivity', null, 'SESSION_IDLE_EXPIRED'));
@@ -77,6 +114,19 @@ export async function authenticate(req, res, next) {
 
     // Check absolute expiration
     if (session.absoluteExpiresAt < now) {
+      await recordSecurityRejectionAuditSafe({
+        action: AUDIT_ACTIONS.SESSION_EXPIRED,
+        reason: 'SESSION_ABSOLUTE_EXPIRED',
+        resourceType: 'SESSION',
+        resourceId: session.id,
+        actorUserId: null,
+        metadata: {
+          sessionUserId: session.userId,
+        },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        req,
+      });
       return res
         .status(401)
         .json(
@@ -85,17 +135,46 @@ export async function authenticate(req, res, next) {
     }
 
     if (!session.user || session.user.status !== 'ACTIVE') {
+      await recordSecurityRejectionAuditSafe({
+        action: AUDIT_ACTIONS.SESSION_VALIDATION_FAILED,
+        reason: 'USER_INACTIVE',
+        resourceType: 'SESSION',
+        resourceId: session.id,
+        actorUserId: null,
+        metadata: {
+          sessionUserId: session.userId,
+        },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        req,
+      });
       return res
         .status(403)
         .json(errorResponse('User account is inactive or suspended', null, 'USER_INACTIVE'));
     }
 
+    // Only load tenant memberships when session belongs to a TENANT context
+    // This avoids querying TenantMembership and Tenant relations for PLATFORM/Superadmin requests
+    let tenantMemberships = [];
+    if (session.sessionType === 'TENANT') {
+      tenantMemberships = await prisma.tenantMembership.findMany({
+        where: {
+          userId: session.userId,
+          ...(session.activeTenantId ? { tenantId: session.activeTenantId } : {}),
+        },
+        include: {
+          tenant: true,
+        },
+      });
+    }
+
     // SEC-AUTH-06: Sliding idle session expiration (throttled to avoid DB write storms)
-    const SUPERADMIN_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+    // Superadmin: 30 minutes; Store Owner: 12 hours (ADR-002)
+    const idleTimeoutMs = session.sessionType === 'TENANT' ? 12 * 60 * 60 * 1000 : 30 * 60 * 1000;
     const lastActivity = session.lastActivityAt ? new Date(session.lastActivityAt).getTime() : 0;
     if (now.getTime() - lastActivity > 60 * 1000) {
-      const prospectiveIdle = new Date(now.getTime() + SUPERADMIN_IDLE_TIMEOUT_MS);
-      // Sliding expiration must never exceed the 12-hour absolute expiration
+      const prospectiveIdle = new Date(now.getTime() + idleTimeoutMs);
+      // Sliding expiration must never exceed the absolute expiration
       const effectiveIdle =
         prospectiveIdle > session.absoluteExpiresAt ? session.absoluteExpiresAt : prospectiveIdle;
 
@@ -114,7 +193,7 @@ export async function authenticate(req, res, next) {
     req.session = session;
     req.user = session.user;
     req.platformRole = session.user.platformAuthorization?.role || null;
-    req.tenantMemberships = session.user.tenantMemberships || [];
+    req.tenantMemberships = tenantMemberships;
     req.activeTenant = session.activeTenant || null;
 
     next();
@@ -189,7 +268,7 @@ export function requireSuperadmin(req, res, next) {
  * - Rejects if the tenant organization is SUSPENDED.
  * - Never trusts client-supplied role or tenant IDs as proof of authorization.
  */
-export function requireStoreOwner(req, res, next) {
+export async function requireStoreOwner(req, res, next) {
   // 1. Portal isolation: Superadmins cannot access Store Owner resources directly
   if (req.platformRole === 'SUPERADMIN') {
     return res
@@ -228,6 +307,23 @@ export function requireStoreOwner(req, res, next) {
 
   // 4. Verify tenant organization status
   if (membership.tenant && membership.tenant.status === 'SUSPENDED') {
+    await recordAuditEvent({
+      actorUserId: req.user.id,
+      actorRole: 'STORE_OWNER',
+      targetTenantId: membership.tenantId,
+      module: AUDIT_MODULES.AUTH,
+      eventType: AUDIT_EVENT_TYPES.SECURITY_AUTH,
+      action: AUDIT_ACTIONS.TENANT_ACCESS_DENIED,
+      status: AUDIT_STATUS.FAILURE,
+      resourceType: 'TENANT',
+      resourceId: membership.tenantId,
+      metadata: {
+        reason: 'TENANT_SUSPENDED',
+      },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      req,
+    });
     return res
       .status(403)
       .json(errorResponse('Tenant organization is suspended', null, 'TENANT_SUSPENDED'));
@@ -242,7 +338,7 @@ export function requireStoreOwner(req, res, next) {
  * Factory for enforcing tenant membership with specific role requirements.
  */
 export function requireTenantMembership(requiredRole = null) {
-  return (req, res, next) => {
+  return async (req, res, next) => {
     const targetTenantId = req.session.activeTenantId || req.params.tenantId;
     const memberships = req.tenantMemberships || [];
 
@@ -265,6 +361,23 @@ export function requireTenantMembership(requiredRole = null) {
     }
 
     if (membership.tenant && membership.tenant.status === 'SUSPENDED') {
+      await recordAuditEvent({
+        actorUserId: req.user.id,
+        actorRole: membership.role,
+        targetTenantId: membership.tenantId,
+        module: AUDIT_MODULES.AUTH,
+        eventType: AUDIT_EVENT_TYPES.SECURITY_AUTH,
+        action: AUDIT_ACTIONS.TENANT_ACCESS_DENIED,
+        status: AUDIT_STATUS.FAILURE,
+        resourceType: 'TENANT',
+        resourceId: membership.tenantId,
+        metadata: {
+          reason: 'TENANT_SUSPENDED',
+        },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        req,
+      });
       return res
         .status(403)
         .json(errorResponse('Tenant organization is suspended', null, 'TENANT_SUSPENDED'));

@@ -49,11 +49,13 @@ describe('Frontend Foundation Architecture Tests', () => {
     expect(state.system.version).toBe('0.1.0');
   });
 
-  it('renders root portal selector on "/"', () => {
+  it('redirects from "/" to "/owner/login" and renders only Store Owner login', () => {
     renderWithProviders('/');
-    expect(screen.getByText(/Retail Operations Portal Entry/i)).toBeInTheDocument();
-    expect(screen.getByText(/Superadmin Portal/i)).toBeInTheDocument();
-    expect(screen.getByText(/Store Owner Portal/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 1, name: /Store Owner Authentication/i })
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Superadmin Portal/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Retail Operations Portal Entry/i)).not.toBeInTheDocument();
   });
 
   it('renders Superadmin layout and overview page on "/platform/overview"', () => {
@@ -75,9 +77,7 @@ describe('Frontend Foundation Architecture Tests', () => {
     expect(screen.getByText(/404/i)).toBeInTheDocument();
     expect(screen.getByText(/Page Not Found/i)).toBeInTheDocument();
     expect(
-      screen.getByText(
-        /The requested route does not exist within the Superadmin or Store Owner namespaces/i
-      )
+      screen.getByText(/The requested route does not exist within the Store Owner namespaces/i)
     ).toBeInTheDocument();
   });
 

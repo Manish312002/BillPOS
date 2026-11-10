@@ -1,5 +1,7 @@
 import { env } from '../config/env.js';
 import { errorResponse } from '../utils/apiResponse.js';
+import { recordSecurityRejectionAuditSafe } from '../services/audit.service.js';
+import { AUDIT_ACTIONS } from '@billingbuddy/shared';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -40,7 +42,7 @@ function hasSessionCookie(req) {
  * Enforces strict origin validation on state-mutating requests (POST, PUT, PATCH, DELETE)
  * that authenticate via cookies.
  */
-export function csrfProtection(req, res, next) {
+export async function csrfProtection(req, res, next) {
   if (SAFE_METHODS.has(req.method)) {
     return next();
   }
@@ -60,6 +62,17 @@ export function csrfProtection(req, res, next) {
     if (allowedOrigins.includes(normalizedOrigin)) {
       return next();
     }
+    await recordSecurityRejectionAuditSafe({
+      action: AUDIT_ACTIONS.CSRF_VALIDATION_FAILED,
+      reason: 'CSRF_ORIGIN_INVALID',
+      actorUserId: req.user?.id || null,
+      metadata: {
+        origin: originHeader,
+      },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      req,
+    });
     return res
       .status(403)
       .json(
@@ -78,6 +91,17 @@ export function csrfProtection(req, res, next) {
     if (refererOrigin && allowedOrigins.includes(refererOrigin)) {
       return next();
     }
+    await recordSecurityRejectionAuditSafe({
+      action: AUDIT_ACTIONS.CSRF_VALIDATION_FAILED,
+      reason: 'CSRF_REFERER_INVALID',
+      actorUserId: req.user?.id || null,
+      metadata: {
+        referer: refererHeader,
+      },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      req,
+    });
     return res
       .status(403)
       .json(
@@ -95,6 +119,15 @@ export function csrfProtection(req, res, next) {
   if (customHeader) {
     return next();
   }
+
+  await recordSecurityRejectionAuditSafe({
+    action: AUDIT_ACTIONS.CSRF_VALIDATION_FAILED,
+    reason: 'CSRF_HEADER_MISSING',
+    actorUserId: req.user?.id || null,
+    ipAddress: req.ip,
+    userAgent: req.headers['user-agent'],
+    req,
+  });
 
   return res
     .status(403)

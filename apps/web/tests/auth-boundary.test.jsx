@@ -276,4 +276,41 @@ describe('Frontend Authentication Boundary & Protected Routing (BB-WP02)', () =>
     expect(screen.getByText(/Platform Administration Overview/i)).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /Welcome Back/i })).not.toBeInTheDocument();
   });
+
+  // 15. Root route "/" redirects to "/owner/login"
+  it('redirects root route "/" to "/owner/login"', () => {
+    store.dispatch(setAuthState(AUTH_STATES.UNAUTHENTICATED));
+
+    renderApp('/');
+
+    expect(
+      screen.getByRole('heading', { level: 1, name: /Store Owner Authentication/i })
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Superadmin Portal/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Retail Operations Portal Entry/i)).not.toBeInTheDocument();
+  });
+
+  // 16. Public login interface "/owner/login" does not advertise or link Superadmin access
+  it('displays only Store Owner login on "/owner/login" without Superadmin references', () => {
+    store.dispatch(setAuthState(AUTH_STATES.UNAUTHENTICATED));
+
+    renderApp('/owner/login');
+
+    expect(
+      screen.getByRole('heading', { level: 1, name: /Store Owner Authentication/i })
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Superadmin/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Portal Index/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Superadmin/i })).not.toBeInTheDocument();
+  });
+
+  // 17. Direct navigation to "/platform/login" renders Superadmin login page
+  it('renders Superadmin login page upon direct navigation to "/platform/login"', () => {
+    store.dispatch(setAuthState(AUTH_STATES.UNAUTHENTICATED));
+
+    renderApp('/platform/login');
+
+    expect(screen.getByRole('heading', { level: 1, name: /Welcome Back/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Sign in to Control Panel/i })).toBeInTheDocument();
+  });
 });

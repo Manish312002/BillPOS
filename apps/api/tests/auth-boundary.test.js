@@ -3,6 +3,7 @@ import request from 'supertest';
 import { app } from '../src/app.js';
 import { prisma } from '../src/db/client.js';
 import { hashPassword, hashToken, generateOpaqueToken } from '../src/utils/security.js';
+import { withTestAuditCleanup } from './helpers/testAuditCleanup.js';
 
 describe('Backend Authentication & Authorization Boundary (BB-WP02)', () => {
   const testId = Date.now();
@@ -171,20 +172,22 @@ describe('Backend Authentication & Authorization Boundary (BB-WP02)', () => {
   });
 
   afterAll(async () => {
-    if (createdTenantIds.length > 0) {
-      await prisma.session.deleteMany({ where: { activeTenantId: { in: createdTenantIds } } });
-      await prisma.tenantMembership.deleteMany({ where: { tenantId: { in: createdTenantIds } } });
-      await prisma.ownerInvitation.deleteMany({ where: { tenantId: { in: createdTenantIds } } });
-      await prisma.onboardingProgress.deleteMany({ where: { tenantId: { in: createdTenantIds } } });
-      await prisma.auditLog.deleteMany({ where: { targetTenantId: { in: createdTenantIds } } });
-      await prisma.tenant.deleteMany({ where: { id: { in: createdTenantIds } } });
-    }
-    if (createdUserIds.length > 0) {
-      await prisma.session.deleteMany({ where: { userId: { in: createdUserIds } } });
-      await prisma.auditLog.deleteMany({ where: { actorUserId: { in: createdUserIds } } });
-      await prisma.platformAuthorization.deleteMany({ where: { userId: { in: createdUserIds } } });
-      await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
-    }
+    await withTestAuditCleanup(async () => {
+      if (createdTenantIds.length > 0) {
+        await prisma.session.deleteMany({ where: { activeTenantId: { in: createdTenantIds } } });
+        await prisma.tenantMembership.deleteMany({ where: { tenantId: { in: createdTenantIds } } });
+        await prisma.ownerInvitation.deleteMany({ where: { tenantId: { in: createdTenantIds } } });
+        await prisma.onboardingProgress.deleteMany({ where: { tenantId: { in: createdTenantIds } } });
+        await prisma.auditLog.deleteMany({ where: { targetTenantId: { in: createdTenantIds } } });
+        await prisma.tenant.deleteMany({ where: { id: { in: createdTenantIds } } });
+      }
+      if (createdUserIds.length > 0) {
+        await prisma.session.deleteMany({ where: { userId: { in: createdUserIds } } });
+        await prisma.auditLog.deleteMany({ where: { actorUserId: { in: createdUserIds } } });
+        await prisma.platformAuthorization.deleteMany({ where: { userId: { in: createdUserIds } } });
+        await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+      }
+    });
   });
 
   // 1. Missing session receives 401

@@ -45,40 +45,53 @@ describe('Root Superadmin Provisioning & Phone / Password Utilities', () => {
   });
 
   it('is strictly idempotent and preserves existing root superadmin password on re-seed', async () => {
-    await prisma.user.updateMany({
-      where: { phone: '+918380989776' },
-      data: { mustChangePassword: true },
-    });
-
-    const rootUser = await prisma.user.findUnique({
-      where: { phone: '+918380989776' },
-      include: { platformAuthorization: true },
-    });
-
-    expect(rootUser).toBeDefined();
-    expect(rootUser.phone).toBe('+918380989776');
-    expect(rootUser.platformAuthorization).toBeDefined();
-    expect(rootUser.platformAuthorization.role).toBe('SUPERADMIN');
-    expect(rootUser.mustChangePassword).toBe(true);
-
-    const initialHash = rootUser.passwordHash;
-    expect(initialHash).toMatch(/^\$2[aby]\$12\$/); // bcrypt format with 12 rounds
-
-    // Execute seed again with a different password
-    const result = await seedRootSuperadmin({
-      phone: '+918380989776',
-      email: rootUser.email,
-      password: 'DifferentPassword@2026!',
-      client: prisma,
-    });
-
-    expect(result.status).toBe('PRESERVED');
-
-    // Confirm database password hash was NOT overwritten
-    const recheckedUser = await prisma.user.findUnique({
+    const originalUser = await prisma.user.findUnique({
       where: { phone: '+918380989776' },
     });
-    expect(recheckedUser.passwordHash).toBe(initialHash);
+    const originalMustChange = originalUser?.mustChangePassword ?? false;
+
+    try {
+      await prisma.user.updateMany({
+        where: { phone: '+918380989776' },
+        data: { mustChangePassword: true },
+      });
+
+      const rootUser = await prisma.user.findUnique({
+        where: { phone: '+918380989776' },
+        include: { platformAuthorization: true },
+      });
+
+      expect(rootUser).toBeDefined();
+      expect(rootUser.phone).toBe('+918380989776');
+      expect(rootUser.platformAuthorization).toBeDefined();
+      expect(rootUser.platformAuthorization.role).toBe('SUPERADMIN');
+      expect(rootUser.mustChangePassword).toBe(true);
+
+      const initialHash = rootUser.passwordHash;
+      expect(initialHash).toMatch(/^\$2[aby]\$12\$/); // bcrypt format with 12 rounds
+
+      // Execute seed again with a different password
+      const result = await seedRootSuperadmin({
+        phone: '+918380989776',
+        email: rootUser.email,
+        password: 'DifferentPassword@2026!',
+        client: prisma,
+      });
+
+      expect(result.status).toBe('PRESERVED');
+
+      // Confirm database password hash was NOT overwritten
+      const recheckedUser = await prisma.user.findUnique({
+        where: { phone: '+918380989776' },
+      });
+      expect(recheckedUser.passwordHash).toBe(initialHash);
+    } finally {
+      // Restore original state so subsequent test suites or local dev do not see corrupted mustChangePassword
+      await prisma.user.updateMany({
+        where: { phone: '+918380989776' },
+        data: { mustChangePassword: originalMustChange },
+      });
+    }
   });
 });
 

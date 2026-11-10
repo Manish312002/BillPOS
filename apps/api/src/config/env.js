@@ -4,7 +4,11 @@ import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+if (process.env.NODE_ENV === 'test') {
+  dotenv.config({ path: path.resolve(__dirname, '../../.env.test'), override: true });
+} else {
+  dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+}
 dotenv.config();
 
 export const envSchema = z.object({

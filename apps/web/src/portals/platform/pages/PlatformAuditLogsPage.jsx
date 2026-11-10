@@ -4,19 +4,19 @@ import StatusBadge from '../../../components/shared/StatusBadge.jsx';
 
 export function PlatformAuditLogsPage() {
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <PageHeader
         title="Platform Audit Logs"
         description="Immutable system activity records, admin actions, and authentication trail."
         badge="Superadmin"
       />
 
-      <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4 space-y-3">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-          <span className="text-sm font-medium text-slate-300">Route Verification</span>
+      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-5 space-y-3 shadow-xs transition-colors">
+        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+          <span className="text-sm font-medium text-slate-800 dark:text-slate-300">Route Verification</span>
           <StatusBadge label="Namespace: /platform/audit-logs" variant="info" />
         </div>
-        <p className="text-xs text-slate-400 leading-relaxed">
+        <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
           Structural view ready for compliance audit logging and security event streaming in future
           work packages.
         </p>

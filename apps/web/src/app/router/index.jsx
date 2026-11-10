@@ -20,6 +20,7 @@ import PlatformSettingsPage from '../../portals/platform/pages/PlatformSettingsP
 
 // Store Owner Portal Pages
 import OwnerLoginPage from '../../portals/owner/pages/OwnerLoginPage.jsx';
+import OwnerActivationPage from '../../portals/owner/pages/OwnerActivationPage.jsx';
 import OwnerOverviewPage from '../../portals/owner/pages/OwnerOverviewPage.jsx';
 import OwnerBillingPage from '../../portals/owner/pages/OwnerBillingPage.jsx';
 import OwnerPosPage from '../../portals/owner/pages/OwnerPosPage.jsx';
@@ -27,7 +28,6 @@ import OwnerCustomersPage from '../../portals/owner/pages/OwnerCustomersPage.jsx
 import OwnerSettingsPage from '../../portals/owner/pages/OwnerSettingsPage.jsx';
 
 // Shared Global Pages
-import PortalIndexPage from '../../components/shared/PortalIndexPage.jsx';
 import NotFoundPage from '../../components/shared/NotFoundPage.jsx';
 
 /**
@@ -59,26 +59,20 @@ export function PublicSuperadminLoginRoute() {
 
 /**
  * Route wrapper for mandatory first-login password change.
- * Enforces SEC-AUTH-08: only accessible when authenticated Superadmin has mustChangePassword: true.
  */
 export function MandatoryPasswordChangeRoute() {
-  const { authState, user, session } = useSelector((state) => state.auth);
+  const { authState, user } = useSelector((state) => state.auth);
 
   if (authState === AUTH_STATES.INITIALIZING) {
     return <SessionLoadingScreen />;
   }
 
-  if (authState === AUTH_STATES.UNAUTHENTICATED) {
+  if (authState !== AUTH_STATES.AUTHENTICATED_SUPERADMIN) {
     return <Navigate to="/platform/login" replace />;
   }
 
-  if (authState === AUTH_STATES.AUTHENTICATED_SUPERADMIN) {
-    if (session?.isRecoveryCodeAckPending) {
-      return <Navigate to="/platform/recovery-codes" replace />;
-    }
-    if (!user?.mustChangePassword) {
-      return <Navigate to="/platform/overview" replace />;
-    }
+  if (!user?.mustChangePassword) {
+    return <Navigate to="/platform/overview" replace />;
   }
 
   return <MandatoryPasswordChangePage />;
@@ -86,23 +80,19 @@ export function MandatoryPasswordChangeRoute() {
 
 /**
  * Route wrapper for emergency recovery codes acknowledgment.
- * Only accessible when Superadmin session has isRecoveryCodeAckPending: true.
  */
 export function RecoveryCodesRoute() {
-  const { authState, user, session } = useSelector((state) => state.auth);
+  const { authState, session } = useSelector((state) => state.auth);
 
   if (authState === AUTH_STATES.INITIALIZING) {
     return <SessionLoadingScreen />;
   }
 
-  if (authState === AUTH_STATES.UNAUTHENTICATED) {
+  if (authState !== AUTH_STATES.AUTHENTICATED_SUPERADMIN) {
     return <Navigate to="/platform/login" replace />;
   }
 
-  if (authState === AUTH_STATES.AUTHENTICATED_SUPERADMIN && !session?.isRecoveryCodeAckPending) {
-    if (user?.mustChangePassword) {
-      return <Navigate to="/platform/change-password" replace />;
-    }
+  if (!session?.isRecoveryCodeAckPending) {
     return <Navigate to="/platform/overview" replace />;
   }
 
@@ -133,12 +123,11 @@ export function PublicOwnerLoginRoute() {
 export function AppRouter() {
   return (
     <Routes>
-      {/* Root Portal Selector */}
-      <Route path="/" element={<PortalIndexPage />} />
-
-      {/* Public Login Routes with Authenticated Redirection */}
+      {/* Public Login & Activation Routes with Authenticated Redirection */}
+      <Route path="/" element={<Navigate to="/owner/login" replace />} />
       <Route path="/platform/login" element={<PublicSuperadminLoginRoute />} />
       <Route path="/owner/login" element={<PublicOwnerLoginRoute />} />
+      <Route path="/owner/activate" element={<OwnerActivationPage />} />
 
       {/* Emergency Recovery Codes Acknowledgment View */}
       <Route path="/platform/recovery-codes" element={<RecoveryCodesRoute />} />

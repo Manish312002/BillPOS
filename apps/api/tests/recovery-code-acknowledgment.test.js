@@ -4,6 +4,7 @@ import { app } from '../src/app.js';
 import { prisma } from '../src/db/client.js';
 import { hashPassword } from '../src/utils/security.js';
 import { computeTotpCode, decryptTotpSecret } from '../src/utils/totp.js';
+import { withTestAuditCleanup } from './helpers/testCleanup.js';
 
 describe('Server-Enforced Recovery-Code Acknowledgment & Regeneration (BB-WP02)', () => {
   const testId = Date.now();
@@ -61,12 +62,13 @@ describe('Server-Enforced Recovery-Code Acknowledgment & Regeneration (BB-WP02)'
 
   afterAll(async () => {
     // Cleanup created test users
-    if (superadminUser) {
-      await prisma.user.deleteMany({ where: { id: superadminUser.id } });
-    }
-    if (nonAdminUser) {
-      await prisma.user.deleteMany({ where: { id: nonAdminUser.id } });
-    }
+    await withTestAuditCleanup(async () => {
+      const userIds = [superadminUser?.id, nonAdminUser?.id].filter(Boolean);
+      if (userIds.length > 0) {
+        await prisma.auditLog.deleteMany({ where: { actorUserId: { in: userIds } } });
+        await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+      }
+    });
   });
 
   describe('Lifecycle: Enrollment Confirmation to Acknowledgment', () => {
@@ -351,7 +353,10 @@ describe('Server-Enforced Recovery-Code Acknowledgment & Regeneration (BB-WP02)'
 
     afterAll(async () => {
       if (raceUser) {
-        await prisma.user.deleteMany({ where: { id: raceUser.id } });
+        await withTestAuditCleanup(async () => {
+          await prisma.auditLog.deleteMany({ where: { actorUserId: raceUser.id } });
+          await prisma.user.deleteMany({ where: { id: raceUser.id } });
+        });
       }
     });
 
@@ -409,7 +414,10 @@ describe('Server-Enforced Recovery-Code Acknowledgment & Regeneration (BB-WP02)'
 
     afterAll(async () => {
       if (unacknowledgedUser) {
-        await prisma.user.deleteMany({ where: { id: unacknowledgedUser.id } });
+        await withTestAuditCleanup(async () => {
+          await prisma.auditLog.deleteMany({ where: { actorUserId: unacknowledgedUser.id } });
+          await prisma.user.deleteMany({ where: { id: unacknowledgedUser.id } });
+        });
       }
     });
 
